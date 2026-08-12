@@ -1,6 +1,14 @@
 import { AppComponent } from './app.component';
 
 describe('AppComponent real scheduling integration', () => {
+  it('starts without presenting demo data as a generated schedule', () => {
+    const component = new AppComponent();
+
+    expect(component.generationResult).toBeUndefined();
+    expect(component.scheduleGrid.rows).toEqual([]);
+    expect(component.activitySlotView).toBeUndefined();
+  });
+
   it('generates the demo matrix with the multi-block domain engine', () => {
     const component = new AppComponent();
 
@@ -51,5 +59,44 @@ describe('AppComponent real scheduling integration', () => {
       'Indica participantes por grupo para usar actividades con máximo de participantes.',
     );
     expect(component.generationResult).toBeUndefined();
+  });
+
+  it('marks an existing schedule as stale after configuration changes until regeneration', () => {
+    const component = new AppComponent();
+    component.generate();
+    const generatedResult = component.generationResult;
+
+    component.setEligibility('caballos', 'cit', false);
+
+    expect(component.scheduleStale).toBeTrue();
+    expect(component.generationResult).toBe(generatedResult);
+
+    component.generate();
+    expect(component.scheduleStale).toBeFalse();
+  });
+
+  it('navigates operational slots without mixing their assignments', () => {
+    const component = new AppComponent();
+    component.generate();
+    const firstView = component.activitySlotView!;
+
+    component.selectActivityBlock('block-2');
+    const secondView = component.activitySlotView!;
+    const secondSlotGroupIds = secondView.activities.flatMap((activity) =>
+      activity.groups.map((group) => group.groupId),
+    );
+
+    expect(firstView.timeBlockId).toBe('block-1');
+    expect(secondView.timeBlockId).toBe('block-2');
+    expect(secondSlotGroupIds.length).toBe(36);
+    expect(new Set(secondSlotGroupIds).size).toBe(36);
+    expect(
+      component.generationResult!.assignments
+        .filter(
+          (assignment) =>
+            assignment.date === secondView.date && assignment.timeBlockId === secondView.timeBlockId,
+        )
+        .length,
+    ).toBe(36);
   });
 });

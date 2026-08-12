@@ -1,5 +1,4 @@
 import type { Activity } from './domain';
-import type { CampActivity } from './models';
 
 export const DEMO_ACTIVITIES: readonly Activity[] = [
   {
@@ -147,13 +146,3 @@ export const DEMO_ACTIVITIES: readonly Activity[] = [
     active: true,
   },
 ];
-
-/** Temporary adapter consumed by the current UI and provisional scheduler. */
-export const ACTIVITY_CATALOG: CampActivity[] = DEMO_ACTIVITIES.map((activity) => ({
-  id: activity.id,
-  name: activity.name,
-  category: activity.displayCategory ?? '',
-  description: activity.description ?? '',
-  capacity: activity.maxGroups,
-  enabled: activity.active,
-}));

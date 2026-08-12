@@ -2,6 +2,7 @@ import type { Activity, GroupCategory, Season, TimeBlock } from './domain';
 import { generateSchedule } from './domain';
 import {
   buildCampGroups,
+  buildActivitySlotView,
   buildScheduleGenerationInput,
   buildScheduleGrid,
   enumerateLocalDates,
@@ -93,5 +94,113 @@ describe('schedule UI transformations', () => {
       'No hay actividades elegibles para la categoría del grupo.',
     );
     expect(unassignedReasonMessage('PARTICIPANT_COUNT_REQUIRED')).toContain('participantes');
+  });
+
+  it('groups every assignment from only the selected slot by activity with capacity totals', () => {
+    const slotGroups = buildCampGroups(categories, [
+      { categoryId: 'sabana', count: 3, participantCount: 10, active: true },
+    ]);
+    const slotActivities: Activity[] = [
+      { id: 'kayak', name: 'Kayak', displayCategory: 'Agua', active: true, maxGroups: 3, maxParticipants: 35 },
+    ];
+    const input = buildScheduleGenerationInput({
+      season,
+      startDate: '2026-08-10',
+      endDate: '2026-08-10',
+      timeBlocks: blocks,
+      groups: slotGroups,
+      activities: slotActivities,
+      groupCategories: categories,
+      activityEligibility: slotActivities.map((activity) => ({
+        activityId: activity.id,
+        groupCategoryId: 'sabana',
+      })),
+      seed: 31,
+    });
+    const result = generateSchedule(input);
+    const view = buildActivitySlotView(
+      result,
+      '2026-08-10',
+      'early',
+      slotGroups,
+      categories,
+      slotActivities,
+      blocks,
+    )!;
+    const selectedAssignments = result.assignments.filter(
+      (assignment) => assignment.date === '2026-08-10' && assignment.timeBlockId === 'early',
+    );
+
+    expect(view.activities.flatMap((activity) => activity.groups).length).toBe(selectedAssignments.length);
+    expect(view.activities.every((activity) => activity.usedGroups === activity.groups.length)).toBeTrue();
+    expect(new Set(view.activities.map((activity) => activity.activityId))).toEqual(
+      new Set(selectedAssignments.map((assignment) => assignment.activityId)),
+    );
+    const kayak = view.activities.find((activity) => activity.activityId === 'kayak')!;
+    expect(kayak.maxGroups).toBe(3);
+    expect(kayak.maxParticipants).toBe(35);
+    expect(kayak.usedParticipants).toBe(30);
+  });
+
+  it('includes translated unassigned groups and excludes assignments from other blocks', () => {
+    const slotGroups = buildCampGroups(categories, [
+      { categoryId: 'sabana', count: 2, participantCount: 10, active: true },
+    ]);
+    const scarceActivities: Activity[] = [{ id: 'kayak', name: 'Kayak', active: true, maxGroups: 1 }];
+    const input = buildScheduleGenerationInput({
+      season,
+      startDate: '2026-08-10',
+      endDate: '2026-08-10',
+      timeBlocks: blocks,
+      groups: slotGroups,
+      activities: scarceActivities,
+      groupCategories: categories,
+      activityEligibility: [{ activityId: 'kayak', groupCategoryId: 'sabana' }],
+      seed: 32,
+    });
+    const result = generateSchedule(input);
+    const view = buildActivitySlotView(
+      result,
+      '2026-08-10',
+      'early',
+      slotGroups,
+      categories,
+      scarceActivities,
+      blocks,
+    )!;
+    const selectedGroupIds = result.assignments
+      .filter((assignment) => assignment.timeBlockId === 'early')
+      .map((assignment) => assignment.groupId);
+
+    expect(view.activities.flatMap((activity) => activity.groups.map((group) => group.groupId))).toEqual(
+      selectedGroupIds,
+    );
+    expect(view.unassigned.length).toBe(1);
+    expect(view.unassigned[0].reasonCode).toBe('CAPACITY_EXHAUSTED');
+    expect(view.unassigned[0].reasonMessage).toContain('capacidad');
+    expect(buildActivitySlotView(result, '2026-08-11', 'early', slotGroups, categories, scarceActivities, blocks))
+      .toBeUndefined();
+  });
+
+  it('produces the same operational view model for the same result and slot', () => {
+    const slotGroups = buildCampGroups(categories, [
+      { categoryId: 'sabana', count: 1, participantCount: 10, active: true },
+    ]);
+    const input = buildScheduleGenerationInput({
+      season,
+      startDate: '2026-08-10',
+      endDate: '2026-08-10',
+      timeBlocks: blocks,
+      groups: slotGroups,
+      activities,
+      groupCategories: categories,
+      activityEligibility: [{ activityId: 'kayak', groupCategoryId: 'sabana' }],
+      seed: 33,
+    });
+    const result = generateSchedule(input);
+
+    expect(buildActivitySlotView(result, '2026-08-10', 'early', slotGroups, categories, activities, blocks)).toEqual(
+      buildActivitySlotView(result, '2026-08-10', 'early', slotGroups, categories, activities, blocks),
+    );
   });
 });

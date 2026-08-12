@@ -50,15 +50,15 @@
       <div class="form-grid">
         <label class="field">
           <span>Fecha inicial</span>
-          <input type="date" [(ngModel)]="startDate" [min]="season.startDate" [max]="season.endDate" />
+          <input type="date" [(ngModel)]="startDate" (ngModelChange)="markScheduleStale()" [min]="season.startDate" [max]="season.endDate" />
         </label>
         <label class="field">
           <span>Fecha final</span>
-          <input type="date" [(ngModel)]="endDate" [min]="season.startDate" [max]="season.endDate" />
+          <input type="date" [(ngModel)]="endDate" (ngModelChange)="markScheduleStale()" [min]="season.startDate" [max]="season.endDate" />
         </label>
         <label class="field">
           <span>Semilla</span>
-          <input type="number" [(ngModel)]="seed" />
+          <input type="number" [(ngModel)]="seed" (ngModelChange)="markScheduleStale()" />
         </label>
       </div>
 
@@ -66,16 +66,16 @@
       <div class="group-config-list">
         <article class="group-config" *ngFor="let category of groupCategories; trackBy: trackById">
           <label class="switch-label">
-            <input type="checkbox" [(ngModel)]="configurationFor(category.id).active" />
+            <input type="checkbox" [(ngModel)]="configurationFor(category.id).active" (ngModelChange)="markScheduleStale()" />
             <strong>{{ category.name }}</strong>
           </label>
           <label class="compact-field">
             <span>Cantidad</span>
-            <input type="number" min="0" [(ngModel)]="configurationFor(category.id).count" />
+            <input type="number" min="0" [(ngModel)]="configurationFor(category.id).count" (ngModelChange)="markScheduleStale()" />
           </label>
           <label class="compact-field">
             <span>Participantes/grupo</span>
-            <input type="number" min="1" [(ngModel)]="configurationFor(category.id).participantCount" />
+            <input type="number" min="1" [(ngModel)]="configurationFor(category.id).participantCount" (ngModelChange)="markScheduleStale()" />
           </label>
         </article>
       </div>
@@ -97,24 +97,24 @@
       <div class="block-list">
         <article class="block-row" *ngFor="let block of timeBlocks; trackBy: trackById">
           <label class="switch-label block-toggle">
-            <input type="checkbox" [(ngModel)]="block.active" />
+            <input type="checkbox" [(ngModel)]="block.active" (ngModelChange)="markScheduleStale()" />
             <span>Activo</span>
           </label>
           <label class="compact-field block-name">
             <span>Nombre</span>
-            <input type="text" [(ngModel)]="block.name" />
+            <input type="text" [(ngModel)]="block.name" (ngModelChange)="markScheduleStale()" />
           </label>
           <label class="compact-field order-field">
             <span>Orden</span>
-            <input type="number" min="1" [(ngModel)]="block.order" />
+            <input type="number" min="1" [(ngModel)]="block.order" (ngModelChange)="markScheduleStale()" />
           </label>
           <label class="compact-field">
             <span>Inicio</span>
-            <input type="time" [(ngModel)]="block.startTime" />
+            <input type="time" [(ngModel)]="block.startTime" (ngModelChange)="markScheduleStale()" />
           </label>
           <label class="compact-field">
             <span>Fin</span>
-            <input type="time" [(ngModel)]="block.endTime" />
+            <input type="time" [(ngModel)]="block.endTime" (ngModelChange)="markScheduleStale()" />
           </label>
         </article>
       </div>
@@ -137,20 +137,20 @@
       <article class="activity-row" *ngFor="let activity of filteredActivities; trackBy: trackById">
         <div class="activity-main">
           <label class="activity-toggle">
-            <input type="checkbox" [(ngModel)]="activity.active" />
+            <input type="checkbox" [(ngModel)]="activity.active" (ngModelChange)="markScheduleStale()" />
             <span>Activa</span>
           </label>
           <label class="compact-field activity-name">
             <span>Nombre</span>
-            <input type="text" [(ngModel)]="activity.name" />
+            <input type="text" [(ngModel)]="activity.name" (ngModelChange)="markScheduleStale()" />
           </label>
           <label class="compact-field">
             <span>Tipo</span>
-            <input type="text" [(ngModel)]="activity.displayCategory" />
+            <input type="text" [(ngModel)]="activity.displayCategory" (ngModelChange)="markScheduleStale()" />
           </label>
           <label class="compact-field capacity-field">
             <span>Máx. grupos</span>
-            <input type="number" min="1" [(ngModel)]="activity.maxGroups" />
+            <input type="number" min="1" [(ngModel)]="activity.maxGroups" (ngModelChange)="markScheduleStale()" />
           </label>
           <label class="compact-field capacity-field">
             <span>Máx. participantes</span>
@@ -185,12 +185,15 @@
     <div class="panel-header generation-header">
       <div>
         <p class="panel-kicker">Motor real</p>
-        <h2>Programación por grupo y bloque</h2>
+        <h2>Programación generada</h2>
       </div>
       <button type="button" class="primary-button" (click)="generate()">Generar programación</button>
     </div>
 
     <div class="message error-message" *ngFor="let message of uiErrors">{{ message }}</div>
+    <div class="message stale-message" *ngIf="scheduleStale">
+      <strong>Programación desactualizada.</strong> La configuración cambió. Vuelve a generar la programación.
+    </div>
     <div
       class="message"
       *ngFor="let diagnostic of diagnosticMessages"
@@ -200,50 +203,120 @@
       {{ diagnostic.text }}
     </div>
 
-    <div class="metrics-grid" *ngIf="generationResult as result">
-      <article><span>Asignaciones</span><strong>{{ result.metrics.global.successfulAssignments }}</strong></article>
-      <article><span>Sin asignar</span><strong>{{ result.metrics.global.unassignedCells }}</strong></article>
-      <article><span>Cobertura</span><strong>{{ result.metrics.global.coveragePercentage | number: '1.0-1' }}%</strong></article>
-      <article><span>Repeticiones prematuras</span><strong>{{ result.metrics.global.prematureRepetitionCount }}</strong></article>
-      <article><span>Ciclos completados</span><strong>{{ completedProjectedCycles }}</strong></article>
-    </div>
+    <ng-container *ngIf="generationResult as result; else emptyState">
+      <div class="metrics-grid">
+        <article><span>Asignaciones</span><strong>{{ result.metrics.global.successfulAssignments }}</strong></article>
+        <article><span>Sin asignar</span><strong>{{ result.metrics.global.unassignedCells }}</strong></article>
+        <article><span>Cobertura</span><strong>{{ result.metrics.global.coveragePercentage | number: '1.0-1' }}%</strong></article>
+        <article><span>Repeticiones prematuras</span><strong>{{ result.metrics.global.prematureRepetitionCount }}</strong></article>
+        <article><span>Ciclos completados</span><strong>{{ completedProjectedCycles }}</strong></article>
+      </div>
 
-    <div class="schedule-table-wrap" *ngIf="scheduleGrid.columns.length > 0; else emptyState">
-      <table class="schedule-table">
-        <thead>
-          <tr>
-            <th class="sticky-column">Grupo</th>
-            <th *ngFor="let column of scheduleGrid.columns; trackBy: trackByKey">
-              <span>{{ column.label }}</span>
-              <small *ngIf="column.timeLabel">{{ column.timeLabel }}</small>
-            </th>
-          </tr>
-        </thead>
-        <tbody *ngFor="let category of groupCategories; trackBy: trackById">
-          <tr class="category-row" *ngIf="rowsForCategory(category.id).length > 0">
-            <th [attr.colspan]="scheduleGrid.columns.length + 1">{{ category.name }}</th>
-          </tr>
-          <tr *ngFor="let row of rowsForCategory(category.id); trackBy: trackByGridRow">
-            <th class="sticky-column group-name">
-              {{ row.group.name }}
-              <small>{{ row.group.participantCount ?? 'Sin dato' }} participantes</small>
-            </th>
-            <td *ngFor="let cell of row.cells; trackBy: trackByKey" [class.unassigned-cell]="cell.unassignedReason">
-              <span *ngIf="cell.activityName; else missingAssignment">{{ cell.activityName }}</span>
-              <ng-template #missingAssignment>
-                <span [title]="cell.unassignedReason ?? ''">{{ cell.unassignedReason ? 'Sin asignación' : '—' }}</span>
-                <small *ngIf="cell.unassignedReason">{{ cell.unassignedReason }}</small>
-              </ng-template>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+      <div class="view-tabs" role="group" aria-label="Vista de la programación">
+        <button type="button" [class.active]="viewMode === 'groups'" (click)="setViewMode('groups')">Por grupos</button>
+        <button type="button" [class.active]="viewMode === 'activities'" (click)="setViewMode('activities')">Por actividades</button>
+      </div>
+
+      <div class="schedule-table-wrap" *ngIf="viewMode === 'groups'">
+        <table class="schedule-table">
+          <thead>
+            <tr>
+              <th class="sticky-column">Grupo</th>
+              <th *ngFor="let column of scheduleGrid.columns; trackBy: trackByKey">
+                <span>{{ column.label }}</span>
+                <small *ngIf="column.timeLabel">{{ column.timeLabel }}</small>
+              </th>
+            </tr>
+          </thead>
+          <tbody *ngFor="let category of generatedCategories; trackBy: trackById">
+            <tr class="category-row" *ngIf="rowsForCategory(category.id).length > 0">
+              <th [attr.colspan]="scheduleGrid.columns.length + 1">{{ category.name }}</th>
+            </tr>
+            <tr *ngFor="let row of rowsForCategory(category.id); trackBy: trackByGridRow">
+              <th class="sticky-column group-name">
+                {{ row.group.name }}
+                <small>{{ row.group.participantCount ?? 'Sin dato' }} participantes</small>
+              </th>
+              <td *ngFor="let cell of row.cells; trackBy: trackByKey" [class.unassigned-cell]="cell.unassignedReason">
+                <span *ngIf="cell.activityName; else missingAssignment">{{ cell.activityName }}</span>
+                <ng-template #missingAssignment>
+                  <span [title]="cell.unassignedReason ?? ''">{{ cell.unassignedReason ? 'Sin asignación' : '—' }}</span>
+                  <small *ngIf="cell.unassignedReason">{{ cell.unassignedReason }}</small>
+                </ng-template>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <section class="activity-view" *ngIf="viewMode === 'activities'" aria-labelledby="activity-view-title">
+        <div class="slot-navigation">
+          <div>
+            <p class="panel-kicker">Vista operativa</p>
+            <h3 id="activity-view-title">Grupos por actividad</h3>
+          </div>
+          <label class="compact-field">
+            <span>Fecha</span>
+            <select [ngModel]="selectedActivityDate" (ngModelChange)="selectActivityDate($event)">
+              <option *ngFor="let date of availableActivityDates" [ngValue]="date">{{ date }}</option>
+            </select>
+          </label>
+          <label class="compact-field">
+            <span>Bloque</span>
+            <select [ngModel]="selectedActivityBlockId" (ngModelChange)="selectActivityBlock($event)">
+              <option *ngFor="let block of availableActivityBlocks; trackBy: trackById" [ngValue]="block.id">
+                {{ block.name }}<ng-container *ngIf="block.startTime"> · {{ block.startTime }}</ng-container>
+              </option>
+            </select>
+          </label>
+        </div>
+
+        <ng-container *ngIf="activitySlotView as slotView">
+          <h3 class="slot-title">{{ slotView.date }} — {{ slotView.timeBlockName }}</h3>
+          <div class="operational-grid">
+            <article class="operational-card" *ngFor="let activity of slotView.activities; trackBy: trackByActivityView">
+              <header>
+                <div>
+                  <span>{{ activity.displayCategory }}</span>
+                  <h4>{{ activity.activityName }}</h4>
+                </div>
+                <div class="capacity-summary">
+                  <strong>{{ activity.usedGroups }} / {{ activity.maxGroups }} grupos</strong>
+                  <small *ngIf="activity.maxParticipants !== undefined && activity.usedParticipants !== undefined">
+                    {{ activity.usedParticipants }} / {{ activity.maxParticipants }} participantes
+                  </small>
+                  <small *ngIf="activity.maxParticipants !== undefined && activity.usedParticipants === undefined">
+                    Participantes sin datos suficientes
+                  </small>
+                </div>
+              </header>
+              <ul>
+                <li *ngFor="let group of activity.groups">
+                  <strong>{{ group.groupName }}</strong>
+                  <span>{{ group.categoryName }}</span>
+                </li>
+              </ul>
+            </article>
+          </div>
+
+          <article class="unassigned-section" aria-labelledby="unassigned-title">
+            <h3 id="unassigned-title">Sin asignación</h3>
+            <p *ngIf="slotView.unassigned.length === 0">Todos los grupos recibieron una actividad en este bloque.</p>
+            <ul *ngIf="slotView.unassigned.length > 0">
+              <li *ngFor="let group of slotView.unassigned">
+                <strong>{{ group.groupName }}</strong>
+                <span>{{ group.reasonMessage }}</span>
+              </li>
+            </ul>
+          </article>
+        </ng-container>
+      </section>
+    </ng-container>
 
     <ng-template #emptyState>
       <div class="empty-state">
-        <h3>No hay programación visible</h3>
-        <p>Corrige la configuración indicada o presiona “Generar programación”.</p>
+        <h3>Aún no hay una programación</h3>
+        <p>Configura el escenario y presiona “Generar programación” para habilitar ambas vistas.</p>
       </div>
     </ng-template>
   </section>

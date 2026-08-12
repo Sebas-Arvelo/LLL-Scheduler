@@ -1,12 +1,14 @@
 import { CommonModule } from '@angular/common';
-import { Component, OnInit } from '@angular/core';
+import { Component } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
 import { DEMO_ACTIVITIES } from './activity-catalog';
 import {
   type Activity,
   type ActivityEligibility,
+  type CampGroup,
   type GroupCategory,
+  type LocalDate,
   type ProjectedCycleSnapshot,
   type ScheduleGenerationResult,
   type SchedulingDiagnosticCode,
@@ -21,10 +23,12 @@ import {
   DEMO_TIME_BLOCKS,
 } from './demo-fixtures';
 import {
+  buildActivitySlotView,
   buildCampGroups,
   buildScheduleGenerationInput,
   buildScheduleGrid,
   enumerateLocalDates,
+  type ActivitySlotView,
   type GroupCategoryConfiguration,
   type ScheduleGridRow,
   type ScheduleGridView,
@@ -55,7 +59,7 @@ const DIAGNOSTIC_MESSAGES: Readonly<Record<SchedulingDiagnosticCode, string>> = 
   templateUrl: './app.component.html',
   styleUrl: './app.component.css',
 })
-export class AppComponent implements OnInit {
+export class AppComponent {
   season: Season = { ...DEMO_SEASON };
   groupCategories: GroupCategory[] = DEMO_GROUP_CATEGORIES.map((category) => ({ ...category }));
   groupConfigurations: GroupCategoryConfiguration[] = DEMO_GROUP_CATEGORIES.map((category) => ({
@@ -73,13 +77,18 @@ export class AppComponent implements OnInit {
   seed = 2026;
   activitySearch = '';
   showProjectedCycles = false;
+  viewMode: 'groups' | 'activities' = 'groups';
+  scheduleStale = false;
+  selectedActivityDate = '';
+  selectedActivityBlockId = '';
   generationResult?: ScheduleGenerationResult;
   scheduleGrid: ScheduleGridView = { columns: [], rows: [] };
+  activitySlotView?: ActivitySlotView;
+  generatedGroups: readonly CampGroup[] = [];
+  generatedActivities: readonly Activity[] = [];
+  generatedCategories: readonly GroupCategory[] = [];
+  generatedTimeBlocks: readonly TimeBlock[] = [];
   uiErrors: string[] = [];
-
-  ngOnInit(): void {
-    this.generate();
-  }
 
   get groups() {
     return buildCampGroups(this.groupCategories, this.groupConfigurations);
@@ -138,8 +147,8 @@ export class AppComponent implements OnInit {
 
   get projectedCycles(): readonly ProjectedCycleView[] {
     if (!this.generationResult) return [];
-    const groupById = new Map(this.groups.map((group) => [group.id, group]));
-    const activityById = new Map(this.activities.map((activity) => [activity.id, activity]));
+    const groupById = new Map(this.generatedGroups.map((group) => [group.id, group]));
+    const activityById = new Map(this.generatedActivities.map((activity) => [activity.id, activity]));
     return this.generationResult.projectedCycles.map((state) => {
       const selected =
         state.cycles.find((cycle) => cycle.snapshot.cycle.id === state.currentCycleId) ?? state.cycles.at(-1);
@@ -149,6 +158,21 @@ export class AppComponent implements OnInit {
         activityById,
       );
     });
+  }
+
+  get availableActivityDates(): readonly LocalDate[] {
+    return [...new Set(this.generationResult?.blocks.map((block) => block.slot.date) ?? [])].sort();
+  }
+
+  get availableActivityBlocks(): readonly TimeBlock[] {
+    const blockIds = new Set(
+      this.generationResult?.blocks
+        .filter((block) => block.slot.date === this.selectedActivityDate)
+        .map((block) => block.slot.timeBlockId) ?? [],
+    );
+    return this.generatedTimeBlocks
+      .filter((block) => blockIds.has(block.id))
+      .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id));
   }
 
   configurationFor(categoryId: string): GroupCategoryConfiguration {
@@ -173,12 +197,33 @@ export class AppComponent implements OnInit {
     } else if (!eligible) {
       this.activityEligibility = this.activityEligibility.filter((entry) => !matches(entry));
     }
+    this.markScheduleStale();
   }
 
   setMaxParticipants(activity: Activity, value: number | null): void {
     const normalized = Number(value);
     if (Number.isInteger(normalized) && normalized > 0) activity.maxParticipants = normalized;
     else delete activity.maxParticipants;
+    this.markScheduleStale();
+  }
+
+  markScheduleStale(): void {
+    if (this.generationResult) this.scheduleStale = true;
+  }
+
+  setViewMode(mode: 'groups' | 'activities'): void {
+    this.viewMode = mode;
+  }
+
+  selectActivityDate(date: LocalDate): void {
+    this.selectedActivityDate = date;
+    this.selectedActivityBlockId = this.availableActivityBlocks[0]?.id ?? '';
+    this.refreshActivitySlotView();
+  }
+
+  selectActivityBlock(timeBlockId: string): void {
+    this.selectedActivityBlockId = timeBlockId;
+    this.refreshActivitySlotView();
   }
 
   generate(): void {
@@ -186,6 +231,8 @@ export class AppComponent implements OnInit {
     if (this.uiErrors.length > 0) {
       this.generationResult = undefined;
       this.scheduleGrid = { columns: [], rows: [] };
+      this.activitySlotView = undefined;
+      this.scheduleStale = false;
       return;
     }
 
@@ -202,13 +249,22 @@ export class AppComponent implements OnInit {
       seed: this.seed,
     });
     this.generationResult = generateSchedule(input);
+    this.generatedGroups = groups.map((group) => ({ ...group }));
+    this.generatedActivities = this.activities.map((activity) => ({ ...activity }));
+    this.generatedCategories = this.groupCategories.map((category) => ({ ...category }));
+    this.generatedTimeBlocks = this.timeBlocks.map((block) => ({ ...block }));
     this.scheduleGrid = buildScheduleGrid(
       this.generationResult,
-      groups,
-      this.groupCategories,
-      this.activities,
-      this.timeBlocks,
+      this.generatedGroups,
+      this.generatedCategories,
+      this.generatedActivities,
+      this.generatedTimeBlocks,
     );
+    this.scheduleStale = false;
+    const firstSlot = this.generationResult.blocks[0]?.slot;
+    this.selectedActivityDate = firstSlot?.date ?? '';
+    this.selectedActivityBlockId = firstSlot?.timeBlockId ?? '';
+    this.refreshActivitySlotView();
   }
 
   trackById(_: number, item: { id: string }): string {
@@ -221,6 +277,25 @@ export class AppComponent implements OnInit {
 
   trackByGridRow(_: number, row: ScheduleGridRow): string {
     return row.group.id;
+  }
+
+  trackByActivityView(_: number, activity: { activityId: string }): string {
+    return activity.activityId;
+  }
+
+  private refreshActivitySlotView(): void {
+    this.activitySlotView =
+      this.generationResult && this.selectedActivityDate && this.selectedActivityBlockId
+        ? buildActivitySlotView(
+            this.generationResult,
+            this.selectedActivityDate,
+            this.selectedActivityBlockId,
+            this.generatedGroups,
+            this.generatedCategories,
+            this.generatedActivities,
+            this.generatedTimeBlocks,
+          )
+        : undefined;
   }
 
   private validateUiConfiguration(): string[] {

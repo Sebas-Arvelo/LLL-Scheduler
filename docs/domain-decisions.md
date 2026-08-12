@@ -27,7 +27,7 @@ Al comenzar un ciclo se guarda una snapshot de las actividades activas y elegibl
 
 ## Dirección del scheduler
 
-El scheduler definitivo será un motor de TypeScript puro e independiente de Angular. Resolverá las asignaciones globalmente por bloque; se evaluará matching bipartito ponderado o flujo de coste mínimo. El algoritmo greedy actual es provisional y no define el comportamiento futuro.
+El scheduler es un motor de TypeScript puro e independiente de Angular. Resuelve las asignaciones globalmente por bloque mediante matching bipartito ponderado de coste mínimo y aplica branch-and-bound cuando existe capacidad por participantes.
 
 ## Fechas e instantes
 
@@ -37,9 +37,9 @@ Las fechas operativas se representan como strings `YYYY-MM-DD`: son fechas civil
 
 La elegibilidad se representa mediante registros independientes `ActivityEligibility` con `activityId` y `groupCategoryId`. Esto mantiene una relación muchos-a-muchos basada en identificadores, evita guardar nombres dentro de una actividad y puede trasladarse directamente a una futura tabla puente.
 
-## Compatibilidad temporal
+## Catálogo de demostración
 
-El catálogo de demostración usa el nuevo modelo `Activity`. Un adaptador conserva por ahora los campos ambiguos `capacity`, `enabled` y `category` requeridos por la interfaz y el scheduler greedy actuales. Esa forma temporal no debe utilizarse en lógica de dominio nueva.
+El catálogo y los fixtures de demostración utilizan directamente `Activity`, `ActivityEligibility`, `GroupCategory`, `Season` y `TimeBlock`. No existe un modelo paralelo para la UI: `maxGroups`, `active` y los demás nombres del dominio son la única representación conceptual vigente.
 
 ## Motor de asignación por bloque
 

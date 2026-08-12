@@ -45,6 +45,39 @@ export interface ScheduleGridView {
   rows: readonly ScheduleGridRow[];
 }
 
+export interface ActivitySlotGroupView {
+  groupId: string;
+  groupName: string;
+  categoryName: string;
+  participantCount?: number;
+}
+
+export interface ActivitySlotAssignmentView {
+  activityId: string;
+  activityName: string;
+  displayCategory: string;
+  groups: readonly ActivitySlotGroupView[];
+  usedGroups: number;
+  maxGroups: number;
+  usedParticipants?: number;
+  maxParticipants?: number;
+}
+
+export interface ActivitySlotUnassignedView {
+  groupId: string;
+  groupName: string;
+  reasonCode: UnassignedReasonCode;
+  reasonMessage: string;
+}
+
+export interface ActivitySlotView {
+  date: LocalDate;
+  timeBlockId: string;
+  timeBlockName: string;
+  activities: readonly ActivitySlotAssignmentView[];
+  unassigned: readonly ActivitySlotUnassignedView[];
+}
+
 const REASON_MESSAGES: Readonly<Record<UnassignedReasonCode, string>> = {
   NO_ELIGIBLE_ACTIVITY: 'No hay actividades elegibles para la categoría del grupo.',
   CAPACITY_EXHAUSTED: 'La capacidad disponible del bloque se agotó.',
@@ -186,4 +219,87 @@ export function buildScheduleGrid(
       }),
     }));
   return { columns, rows };
+}
+
+export function buildActivitySlotView(
+  result: ScheduleGenerationResult,
+  date: LocalDate,
+  timeBlockId: string,
+  groups: readonly CampGroup[],
+  categories: readonly GroupCategory[],
+  activities: readonly Activity[],
+  timeBlocks: readonly TimeBlock[],
+): ActivitySlotView | undefined {
+  if (!result.blocks.some((block) => block.slot.date === date && block.slot.timeBlockId === timeBlockId)) {
+    return undefined;
+  }
+
+  const groupById = new Map(groups.map((group) => [group.id, group]));
+  const categoryById = new Map(categories.map((category) => [category.id, category]));
+  const activityById = new Map(activities.map((activity) => [activity.id, activity]));
+  const slotAssignments = result.assignments.filter(
+    (assignment) => assignment.date === date && assignment.timeBlockId === timeBlockId,
+  );
+  const assignedByActivity = new Map<string, ActivitySlotGroupView[]>();
+
+  for (const assignment of slotAssignments) {
+    const group = groupById.get(assignment.groupId);
+    if (!group) continue;
+    const assignedGroups = assignedByActivity.get(assignment.activityId) ?? [];
+    assignedGroups.push({
+      groupId: group.id,
+      groupName: group.name,
+      categoryName: categoryById.get(group.categoryId)?.name ?? group.categoryId,
+      ...(group.participantCount !== undefined ? { participantCount: group.participantCount } : {}),
+    });
+    assignedByActivity.set(assignment.activityId, assignedGroups);
+  }
+
+  const activityViews = [...assignedByActivity.entries()]
+    .flatMap<ActivitySlotAssignmentView>(([activityId, assignedGroups]) => {
+      const activity = activityById.get(activityId);
+      if (!activity) return [];
+      const sortedGroups = [...assignedGroups].sort(
+        (left, right) =>
+          left.categoryName.localeCompare(right.categoryName) || left.groupName.localeCompare(right.groupName),
+      );
+      const hasCompleteParticipantCount = sortedGroups.every((group) => group.participantCount !== undefined);
+      return [{
+        activityId: activity.id,
+        activityName: activity.name,
+        displayCategory: activity.displayCategory ?? 'Sin tipo',
+        groups: sortedGroups,
+        usedGroups: sortedGroups.length,
+        maxGroups: activity.maxGroups,
+        ...(activity.maxParticipants !== undefined ? { maxParticipants: activity.maxParticipants } : {}),
+        ...(activity.maxParticipants !== undefined && hasCompleteParticipantCount
+          ? { usedParticipants: sortedGroups.reduce((sum, group) => sum + group.participantCount!, 0) }
+          : {}),
+      }];
+    })
+    .sort(
+      (left, right) =>
+        left.displayCategory.localeCompare(right.displayCategory) ||
+        left.activityName.localeCompare(right.activityName),
+    );
+
+  const slotUnassigned = result.unassigned
+    .find((block) => block.slot.date === date && block.slot.timeBlockId === timeBlockId)
+    ?.groups ?? [];
+  const unassigned = slotUnassigned
+    .map<ActivitySlotUnassignedView>((missingGroup) => ({
+      groupId: missingGroup.groupId,
+      groupName: groupById.get(missingGroup.groupId)?.name ?? missingGroup.groupId,
+      reasonCode: missingGroup.reasonCode,
+      reasonMessage: unassignedReasonMessage(missingGroup.reasonCode),
+    }))
+    .sort((left, right) => left.groupName.localeCompare(right.groupName));
+
+  return {
+    date,
+    timeBlockId,
+    timeBlockName: timeBlocks.find((block) => block.id === timeBlockId)?.name ?? timeBlockId,
+    activities: activityViews,
+    unassigned,
+  };
 }
