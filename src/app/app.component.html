@@ -1,0 +1,143 @@
+<main class="shell">
+  <section class="hero">
+    <div class="brand-card">
+      <div>
+        <img class="brand-logo" src="assets/logo-llanada-full.png" alt="La Llanada Venezuela" />
+        <p class="eyebrow">La Llanada</p>
+        <h1>Planificador de actividades del campamento</h1>
+        <p class="subtitle">
+          Distribuye actividades de forma equitativa para que cada cabaña o grupo complete el ciclo antes de repetir.
+        </p>
+      </div>
+    </div>
+
+    <div class="hero-grid">
+      <article class="stat-card emphasis">
+        <span>Temporada activa</span>
+        <strong>{{ selectedSeason.label }}</strong>
+        <small>{{ selectedSeason.days }} días</small>
+      </article>
+      <article class="stat-card">
+        <span>Grupos configurados</span>
+        <strong>{{ totalGroups }}</strong>
+        <small>Cabañas y grupos</small>
+      </article>
+      <article class="stat-card">
+        <span>Actividades habilitadas</span>
+        <strong>{{ getCycleLength() }}</strong>
+        <small>Ciclo sin repetición</small>
+      </article>
+      <article class="stat-card">
+        <span>Capacidad total</span>
+        <strong>{{ totalCapacity }}</strong>
+        <small>Participantes por ronda</small>
+      </article>
+    </div>
+  </section>
+
+  <section class="panel-grid">
+    <article class="panel controls-panel">
+      <div class="panel-header">
+        <div>
+          <p class="panel-kicker">Configuración</p>
+          <h2>Temporada y grupos</h2>
+        </div>
+      </div>
+
+      <label class="field">
+        <span>Temporada</span>
+        <select [(ngModel)]="seasonId" (ngModelChange)="onSeasonChange()">
+          <option *ngFor="let season of seasons" [ngValue]="season.id">{{ season.label }} - {{ season.days }} días</option>
+        </select>
+      </label>
+
+      <label class="field">
+        <span>Semilla de reparto</span>
+        <input type="number" [(ngModel)]="seed" (ngModelChange)="onSeedChange()" />
+      </label>
+
+      <div class="group-grid">
+        <label class="field" *ngFor="let template of groupTemplates">
+          <span>{{ template.label }}</span>
+          <input
+            type="number"
+            min="0"
+            [ngModel]="getGroupCount(template.key)"
+            (ngModelChange)="setGroupCount(template.key, $event)"
+          />
+        </label>
+      </div>
+
+      <div class="note-box">
+        <p><strong>Regla base:</strong> cada grupo va rotando por el ciclo completo antes de repetir actividad.</p>
+        <p><strong>Restricciones especiales:</strong> cada actividad tiene capacidad editable; por defecto, <em>Caballos</em> inicia con 3.</p>
+      </div>
+    </article>
+
+    <article class="panel activities-panel">
+      <div class="panel-header">
+        <div>
+          <p class="panel-kicker">Catálogo</p>
+          <h2>Actividades del PDF</h2>
+        </div>
+        <label class="field search-field">
+          <span>Buscar</span>
+          <input type="search" [(ngModel)]="activitySearch" />
+        </label>
+      </div>
+
+      <div class="activity-list">
+        <article class="activity-row" *ngFor="let activity of enabledActivities; trackBy: trackByActivityId">
+          <label class="activity-toggle">
+            <input type="checkbox" [checked]="activity.enabled" (change)="toggleActivity(activity)" />
+            <div>
+              <strong>{{ activity.name }}</strong>
+              <p>{{ activity.description }}</p>
+            </div>
+          </label>
+
+          <div class="activity-meta">
+            <span>{{ activity.category }}</span>
+            <label>
+              <small>Capacidad</small>
+              <input type="number" min="1" [(ngModel)]="activity.capacity" (ngModelChange)="onActivityChange()" />
+            </label>
+          </div>
+        </article>
+      </div>
+    </article>
+  </section>
+
+  <section class="panel schedule-panel">
+    <div class="panel-header">
+      <div>
+        <p class="panel-kicker">Resultado</p>
+        <h2>Distribución diaria</h2>
+      </div>
+      <button type="button" class="primary-button" (click)="rebuildPlan()">Recalcular plan</button>
+    </div>
+
+    <div class="schedule-grid" *ngIf="generatedPlan.length > 0; else emptyState">
+      <article class="day-card" *ngFor="let day of generatedPlan; trackBy: trackByDay">
+        <header>
+          <h3>Día {{ day.day }}</h3>
+          <span>{{ day.assignments.length }} asignaciones</span>
+        </header>
+
+        <div class="assignment-list">
+          <div class="assignment-item" *ngFor="let assignment of day.assignments; trackBy: trackByGroupId">
+            <strong>{{ assignment.group.name }}</strong>
+            <span>{{ assignment.activity.name }}</span>
+          </div>
+        </div>
+      </article>
+    </div>
+
+    <ng-template #emptyState>
+      <div class="empty-state">
+        <h3>No hay plan todavía</h3>
+        <p>Revisa la configuración de grupos y actividades para generar la distribución.</p>
+      </div>
+    </ng-template>
+  </section>
+</main>
