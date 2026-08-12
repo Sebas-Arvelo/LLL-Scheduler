@@ -1,36 +1,34 @@
 <main class="shell">
   <section class="hero">
     <div class="brand-card">
-      <div>
-        <img class="brand-logo" src="assets/logo-llanada-full.png" alt="La Llanada Venezuela" />
-        <p class="eyebrow">La Llanada</p>
-        <h1>Planificador de actividades del campamento</h1>
-        <p class="subtitle">
-          Distribuye actividades de forma equitativa para que cada cabaña o grupo complete el ciclo antes de repetir.
-        </p>
-      </div>
+      <img class="brand-logo" src="assets/logo-llanada-full.png" alt="La Llanada Venezuela" />
+      <p class="eyebrow">La Llanada</p>
+      <h1>Planificador de actividades del campamento</h1>
+      <p class="subtitle">
+        Configura grupos, actividades y bloques; el motor de dominio genera una rotación reproducible para toda la temporada.
+      </p>
     </div>
 
     <div class="hero-grid">
       <article class="stat-card emphasis">
-        <span>Temporada activa</span>
-        <strong>{{ selectedSeason.label }}</strong>
-        <small>{{ selectedSeason.days }} días</small>
+        <span>Temporada</span>
+        <strong>{{ season.name }}</strong>
+        <small>{{ season.startDate }} — {{ season.endDate }}</small>
       </article>
       <article class="stat-card">
         <span>Grupos configurados</span>
         <strong>{{ totalGroups }}</strong>
-        <small>Cabañas y grupos</small>
+        <small>{{ activeGroupCount }} activos</small>
       </article>
       <article class="stat-card">
-        <span>Actividades habilitadas</span>
-        <strong>{{ getCycleLength() }}</strong>
-        <small>Ciclo sin repetición</small>
+        <span>Actividades</span>
+        <strong>{{ activeActivities }}</strong>
+        <small>activas de {{ activities.length }}</small>
       </article>
       <article class="stat-card">
-        <span>Capacidad total</span>
-        <strong>{{ totalCapacity }}</strong>
-        <small>Participantes por ronda</small>
+        <span>Generación</span>
+        <strong>{{ requestedDays }} × {{ activeBlocks }}</strong>
+        <small>días × bloques · seed {{ seed }}</small>
       </article>
     </div>
   </section>
@@ -44,100 +42,232 @@
         </div>
       </div>
 
-      <label class="field">
-        <span>Temporada</span>
-        <select [(ngModel)]="seasonId" (ngModelChange)="onSeasonChange()">
-          <option *ngFor="let season of seasons" [ngValue]="season.id">{{ season.label }} - {{ season.days }} días</option>
-        </select>
-      </label>
+      <div class="season-summary">
+        <strong>{{ season.name }}</strong>
+        <span>Del {{ season.startDate }} al {{ season.endDate }}</span>
+      </div>
 
-      <label class="field">
-        <span>Semilla de reparto</span>
-        <input type="number" [(ngModel)]="seed" (ngModelChange)="onSeedChange()" />
-      </label>
-
-      <div class="group-grid">
-        <label class="field" *ngFor="let template of groupTemplates">
-          <span>{{ template.label }}</span>
-          <input
-            type="number"
-            min="0"
-            [ngModel]="getGroupCount(template.key)"
-            (ngModelChange)="setGroupCount(template.key, $event)"
-          />
+      <div class="form-grid">
+        <label class="field">
+          <span>Fecha inicial</span>
+          <input type="date" [(ngModel)]="startDate" [min]="season.startDate" [max]="season.endDate" />
         </label>
+        <label class="field">
+          <span>Fecha final</span>
+          <input type="date" [(ngModel)]="endDate" [min]="season.startDate" [max]="season.endDate" />
+        </label>
+        <label class="field">
+          <span>Semilla</span>
+          <input type="number" [(ngModel)]="seed" />
+        </label>
+      </div>
+
+      <h3 class="subheading">Grupos por categoría</h3>
+      <div class="group-config-list">
+        <article class="group-config" *ngFor="let category of groupCategories; trackBy: trackById">
+          <label class="switch-label">
+            <input type="checkbox" [(ngModel)]="configurationFor(category.id).active" />
+            <strong>{{ category.name }}</strong>
+          </label>
+          <label class="compact-field">
+            <span>Cantidad</span>
+            <input type="number" min="0" [(ngModel)]="configurationFor(category.id).count" />
+          </label>
+          <label class="compact-field">
+            <span>Participantes/grupo</span>
+            <input type="number" min="1" [(ngModel)]="configurationFor(category.id).participantCount" />
+          </label>
+        </article>
       </div>
 
       <div class="note-box">
-        <p><strong>Regla base:</strong> cada grupo va rotando por el ciclo completo antes de repetir actividad.</p>
-        <p><strong>Restricciones especiales:</strong> cada actividad tiene capacidad editable; por defecto, <em>Caballos</em> inicia con 3.</p>
+        <p><strong>Determinismo:</strong> la misma configuración y seed producen el mismo resultado.</p>
+        <p>El tamaño configurado se aplica a todos los grupos de la categoría y permite validar <code>maxParticipants</code>.</p>
       </div>
     </article>
 
-    <article class="panel activities-panel">
+    <article class="panel blocks-panel">
       <div class="panel-header">
         <div>
-          <p class="panel-kicker">Catálogo</p>
-          <h2>Actividades del PDF</h2>
+          <p class="panel-kicker">Jornada</p>
+          <h2>Bloques de la temporada</h2>
         </div>
-        <label class="field search-field">
-          <span>Buscar</span>
-          <input type="search" [(ngModel)]="activitySearch" />
-        </label>
       </div>
 
-      <div class="activity-list">
-        <article class="activity-row" *ngFor="let activity of enabledActivities; trackBy: trackByActivityId">
-          <label class="activity-toggle">
-            <input type="checkbox" [checked]="activity.enabled" (change)="toggleActivity(activity)" />
-            <div>
-              <strong>{{ activity.name }}</strong>
-              <p>{{ activity.description }}</p>
-            </div>
+      <div class="block-list">
+        <article class="block-row" *ngFor="let block of timeBlocks; trackBy: trackById">
+          <label class="switch-label block-toggle">
+            <input type="checkbox" [(ngModel)]="block.active" />
+            <span>Activo</span>
           </label>
-
-          <div class="activity-meta">
-            <span>{{ activity.category }}</span>
-            <label>
-              <small>Capacidad</small>
-              <input type="number" min="1" [(ngModel)]="activity.capacity" (ngModelChange)="onActivityChange()" />
-            </label>
-          </div>
+          <label class="compact-field block-name">
+            <span>Nombre</span>
+            <input type="text" [(ngModel)]="block.name" />
+          </label>
+          <label class="compact-field order-field">
+            <span>Orden</span>
+            <input type="number" min="1" [(ngModel)]="block.order" />
+          </label>
+          <label class="compact-field">
+            <span>Inicio</span>
+            <input type="time" [(ngModel)]="block.startTime" />
+          </label>
+          <label class="compact-field">
+            <span>Fin</span>
+            <input type="time" [(ngModel)]="block.endTime" />
+          </label>
         </article>
       </div>
     </article>
   </section>
 
-  <section class="panel schedule-panel">
+  <section class="panel activities-panel">
     <div class="panel-header">
       <div>
-        <p class="panel-kicker">Resultado</p>
-        <h2>Distribución diaria</h2>
+        <p class="panel-kicker">Catálogo</p>
+        <h2>Actividades y elegibilidad</h2>
       </div>
-      <button type="button" class="primary-button" (click)="rebuildPlan()">Recalcular plan</button>
+      <label class="field search-field">
+        <span>Buscar</span>
+        <input type="search" [(ngModel)]="activitySearch" placeholder="Nombre o tipo" />
+      </label>
     </div>
 
-    <div class="schedule-grid" *ngIf="generatedPlan.length > 0; else emptyState">
-      <article class="day-card" *ngFor="let day of generatedPlan; trackBy: trackByDay">
-        <header>
-          <h3>Día {{ day.day }}</h3>
-          <span>{{ day.assignments.length }} asignaciones</span>
-        </header>
+    <div class="activity-list">
+      <article class="activity-row" *ngFor="let activity of filteredActivities; trackBy: trackById">
+        <div class="activity-main">
+          <label class="activity-toggle">
+            <input type="checkbox" [(ngModel)]="activity.active" />
+            <span>Activa</span>
+          </label>
+          <label class="compact-field activity-name">
+            <span>Nombre</span>
+            <input type="text" [(ngModel)]="activity.name" />
+          </label>
+          <label class="compact-field">
+            <span>Tipo</span>
+            <input type="text" [(ngModel)]="activity.displayCategory" />
+          </label>
+          <label class="compact-field capacity-field">
+            <span>Máx. grupos</span>
+            <input type="number" min="1" [(ngModel)]="activity.maxGroups" />
+          </label>
+          <label class="compact-field capacity-field">
+            <span>Máx. participantes</span>
+            <input
+              type="number"
+              min="1"
+              placeholder="Sin límite"
+              [ngModel]="activity.maxParticipants ?? null"
+              (ngModelChange)="setMaxParticipants(activity, $event)"
+            />
+          </label>
+        </div>
 
-        <div class="assignment-list">
-          <div class="assignment-item" *ngFor="let assignment of day.assignments; trackBy: trackByGroupId">
-            <strong>{{ assignment.group.name }}</strong>
-            <span>{{ assignment.activity.name }}</span>
-          </div>
+        <p class="activity-description" *ngIf="activity.description">{{ activity.description }}</p>
+
+        <div class="eligibility-row" aria-label="Categorías elegibles">
+          <span>Elegible:</span>
+          <label *ngFor="let category of groupCategories; trackBy: trackById">
+            <input
+              type="checkbox"
+              [checked]="isEligible(activity.id, category.id)"
+              (change)="setEligibility(activity.id, category.id, $any($event.target).checked)"
+            />
+            {{ category.name }}
+          </label>
         </div>
       </article>
+    </div>
+  </section>
+
+  <section class="panel schedule-panel">
+    <div class="panel-header generation-header">
+      <div>
+        <p class="panel-kicker">Motor real</p>
+        <h2>Programación por grupo y bloque</h2>
+      </div>
+      <button type="button" class="primary-button" (click)="generate()">Generar programación</button>
+    </div>
+
+    <div class="message error-message" *ngFor="let message of uiErrors">{{ message }}</div>
+    <div
+      class="message"
+      *ngFor="let diagnostic of diagnosticMessages"
+      [class.error-message]="diagnostic.kind === 'error'"
+      [class.warning-message]="diagnostic.kind === 'warning'"
+    >
+      {{ diagnostic.text }}
+    </div>
+
+    <div class="metrics-grid" *ngIf="generationResult as result">
+      <article><span>Asignaciones</span><strong>{{ result.metrics.global.successfulAssignments }}</strong></article>
+      <article><span>Sin asignar</span><strong>{{ result.metrics.global.unassignedCells }}</strong></article>
+      <article><span>Cobertura</span><strong>{{ result.metrics.global.coveragePercentage | number: '1.0-1' }}%</strong></article>
+      <article><span>Repeticiones prematuras</span><strong>{{ result.metrics.global.prematureRepetitionCount }}</strong></article>
+      <article><span>Ciclos completados</span><strong>{{ completedProjectedCycles }}</strong></article>
+    </div>
+
+    <div class="schedule-table-wrap" *ngIf="scheduleGrid.columns.length > 0; else emptyState">
+      <table class="schedule-table">
+        <thead>
+          <tr>
+            <th class="sticky-column">Grupo</th>
+            <th *ngFor="let column of scheduleGrid.columns; trackBy: trackByKey">
+              <span>{{ column.label }}</span>
+              <small *ngIf="column.timeLabel">{{ column.timeLabel }}</small>
+            </th>
+          </tr>
+        </thead>
+        <tbody *ngFor="let category of groupCategories; trackBy: trackById">
+          <tr class="category-row" *ngIf="rowsForCategory(category.id).length > 0">
+            <th [attr.colspan]="scheduleGrid.columns.length + 1">{{ category.name }}</th>
+          </tr>
+          <tr *ngFor="let row of rowsForCategory(category.id); trackBy: trackByGridRow">
+            <th class="sticky-column group-name">
+              {{ row.group.name }}
+              <small>{{ row.group.participantCount ?? 'Sin dato' }} participantes</small>
+            </th>
+            <td *ngFor="let cell of row.cells; trackBy: trackByKey" [class.unassigned-cell]="cell.unassignedReason">
+              <span *ngIf="cell.activityName; else missingAssignment">{{ cell.activityName }}</span>
+              <ng-template #missingAssignment>
+                <span [title]="cell.unassignedReason ?? ''">{{ cell.unassignedReason ? 'Sin asignación' : '—' }}</span>
+                <small *ngIf="cell.unassignedReason">{{ cell.unassignedReason }}</small>
+              </ng-template>
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </div>
 
     <ng-template #emptyState>
       <div class="empty-state">
-        <h3>No hay plan todavía</h3>
-        <p>Revisa la configuración de grupos y actividades para generar la distribución.</p>
+        <h3>No hay programación visible</h3>
+        <p>Corrige la configuración indicada o presiona “Generar programación”.</p>
       </div>
     </ng-template>
+  </section>
+
+  <section class="panel cycle-panel" *ngIf="generationResult">
+    <div class="panel-header">
+      <div>
+        <p class="panel-kicker">Proyección</p>
+        <h2>Estado de ciclos si se completa el plan</h2>
+      </div>
+      <button type="button" class="secondary-button" (click)="showProjectedCycles = !showProjectedCycles">
+        {{ showProjectedCycles ? 'Ocultar ciclos' : 'Ver ciclos' }}
+      </button>
+    </div>
+
+    <div class="cycle-list" *ngIf="showProjectedCycles">
+      <article class="cycle-card" *ngFor="let cycle of projectedCycles">
+        <header>
+          <strong>{{ cycle.groupName }}</strong>
+          <span>Ciclo {{ cycle.cycleNumber }} · {{ cycle.status }}</span>
+        </header>
+        <p><strong>Completadas:</strong> {{ cycle.completed.length ? cycle.completed.join(', ') : 'Ninguna' }}</p>
+        <p><strong>Pendientes:</strong> {{ cycle.pending.length ? cycle.pending.join(', ') : 'Ninguna' }}</p>
+      </article>
+    </div>
   </section>
 </main>
