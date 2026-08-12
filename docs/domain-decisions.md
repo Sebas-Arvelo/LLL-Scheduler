@@ -28,3 +28,15 @@ Al comenzar un ciclo se guarda una snapshot de las actividades activas y elegibl
 ## Dirección del scheduler
 
 El scheduler definitivo será un motor de TypeScript puro e independiente de Angular. Resolverá las asignaciones globalmente por bloque; se evaluará matching bipartito ponderado o flujo de coste mínimo. El algoritmo greedy actual es provisional y no define el comportamiento futuro.
+
+## Fechas e instantes
+
+Las fechas operativas se representan como strings `YYYY-MM-DD`: son fechas civiles del campamento y no instantes, por lo que no deben convertirse implícitamente a la zona horaria del navegador. Los eventos que sí representan un instante, como el inicio o cierre de un ciclo, usan strings ISO 8601 en UTC.
+
+## Elegibilidad
+
+La elegibilidad se representa mediante registros independientes `ActivityEligibility` con `activityId` y `groupCategoryId`. Esto mantiene una relación muchos-a-muchos basada en identificadores, evita guardar nombres dentro de una actividad y puede trasladarse directamente a una futura tabla puente.
+
+## Compatibilidad temporal
+
+El catálogo de demostración usa el nuevo modelo `Activity`. Un adaptador conserva por ahora los campos ambiguos `capacity`, `enabled` y `category` requeridos por la interfaz y el scheduler greedy actuales. Esa forma temporal no debe utilizarse en lógica de dominio nueva.

@@ -1,3 +1,5 @@
+// Temporary view models used only by the current prototype UI and scheduler.
+// New business logic must use the contracts under ./domain instead.
 export interface SeasonOption {
   id: string;
   label: string;
