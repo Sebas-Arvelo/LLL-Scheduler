@@ -6,3 +6,4 @@ export * from './scheduling';
 export * from './seasons';
 export * from './time-blocks';
 export * from './validation';
+export * from './scheduling/block-scheduler';

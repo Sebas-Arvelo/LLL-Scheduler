@@ -40,3 +40,9 @@ La elegibilidad se representa mediante registros independientes `ActivityEligibi
 ## Compatibilidad temporal
 
 El catálogo de demostración usa el nuevo modelo `Activity`. Un adaptador conserva por ahora los campos ambiguos `capacity`, `enabled` y `category` requeridos por la interfaz y el scheduler greedy actuales. Esa forma temporal no debe utilizarse en lógica de dominio nueva.
+
+## Motor de asignación por bloque
+
+El primer motor real resuelve una única combinación de fecha y bloque mediante matching bipartito de coste mínimo. Maximiza primero la cantidad de grupos asignados y después minimiza, en orden, repeticiones dentro del ciclo, desequilibrio histórico, uso reciente, falta de equidad y un desempate determinista por semilla. Las capacidades variables de participantes se resuelven mediante branch-and-bound sobre el matching, sin aceptar soluciones que excedan una hard constraint.
+
+Solo las asignaciones con estado `completed` cuentan como actividades realizadas para el historial. Las asignaciones bloqueadas conservan su identidad opcional, ocupan capacidad antes de generar propuestas y un bloque con asignaciones bloqueadas inválidas produce `invalid_input` en lugar de una corrección silenciosa.

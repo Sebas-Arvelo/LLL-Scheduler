@@ -3,6 +3,7 @@ import type { ActivityCycleSnapshot } from './cycles';
 import type { CampGroup, GroupCategory } from './groups';
 import type {
   ActivityId,
+  AssignmentId,
   CycleId,
   GroupId,
   LocalDate,
@@ -15,6 +16,7 @@ export type AssignmentSource = 'automatic' | 'manual' | 'imported';
 export type AssignmentStatus = 'proposed' | 'confirmed' | 'completed' | 'cancelled';
 
 export interface Assignment {
+  id?: AssignmentId;
   scheduleId?: ScheduleId;
   groupId: GroupId;
   activityId: ActivityId;
@@ -79,6 +81,8 @@ export type UnassignedReasonCode =
   | 'CAPACITY_EXHAUSTED'
   | 'GROUP_UNAVAILABLE'
   | 'NO_AVAILABLE_ACTIVITY'
+  | 'PARTICIPANT_COUNT_REQUIRED'
+  | 'INVALID_INPUT'
   | 'NO_FEASIBLE_ASSIGNMENT';
 
 export interface UnassignedGroup {
@@ -88,13 +92,26 @@ export interface UnassignedGroup {
   context?: Readonly<Record<string, unknown>>;
 }
 
-export interface SchedulingWarning {
-  code: string;
+export type SchedulingDiagnosticCode =
+  | 'INACTIVE_GROUP_SKIPPED'
+  | 'INVALID_SCHEDULING_INPUT'
+  | 'LOCKED_ASSIGNMENT_OUTSIDE_TARGET'
+  | 'INVALID_LOCKED_ASSIGNMENT'
+  | 'DUPLICATE_AVAILABILITY'
+  | 'PARTICIPANT_COUNT_REQUIRED';
+
+export interface SchedulingDiagnosticIssue {
+  code: SchedulingDiagnosticCode;
   message: string;
+  context?: Readonly<Record<string, unknown>>;
 }
 
 export interface SchedulingMetrics {
   candidateCount: number;
+  inputGroupCount: number;
+  evaluatedGroupCount: number;
+  inactiveGroupCount: number;
+  lockedAssignmentCount: number;
   assignedGroupCount: number;
   unassignedGroupCount: number;
 }
@@ -103,10 +120,14 @@ export interface SchedulingDiagnostics {
   algorithmVersion: string;
   seed?: number;
   metrics?: SchedulingMetrics;
-  warnings: readonly SchedulingWarning[];
+  warnings: readonly SchedulingDiagnosticIssue[];
+  errors: readonly SchedulingDiagnosticIssue[];
 }
 
+export type SchedulingResultStatus = 'success' | 'invalid_input';
+
 export interface SchedulingResult {
+  status: SchedulingResultStatus;
   assignments: readonly Assignment[];
   unassigned: readonly UnassignedGroup[];
   diagnostics: SchedulingDiagnostics;

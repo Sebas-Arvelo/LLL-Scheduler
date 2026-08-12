@@ -70,6 +70,7 @@ describe('scheduling domain contracts', () => {
   it('reports an unassigned group without creating an invalid assignment', () => {
     const assignments: Assignment[] = [];
     const result: SchedulingResult = {
+      status: 'success',
       assignments,
       unassigned: [
         {
@@ -81,6 +82,7 @@ describe('scheduling domain contracts', () => {
       diagnostics: {
         algorithmVersion: 'contract-only',
         warnings: [],
+        errors: [],
       },
     };
 
