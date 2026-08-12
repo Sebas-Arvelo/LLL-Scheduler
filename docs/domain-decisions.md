@@ -46,3 +46,11 @@ El catálogo de demostración usa el nuevo modelo `Activity`. Un adaptador conse
 El primer motor real resuelve una única combinación de fecha y bloque mediante matching bipartito de coste mínimo. Maximiza primero la cantidad de grupos asignados y después minimiza, en orden, repeticiones dentro del ciclo, desequilibrio histórico, uso reciente, falta de equidad y un desempate determinista por semilla. Las capacidades variables de participantes se resuelven mediante branch-and-bound sobre el matching, sin aceptar soluciones que excedan una hard constraint.
 
 Solo las asignaciones con estado `completed` cuentan como actividades realizadas para el historial. Las asignaciones bloqueadas conservan su identidad opcional, ocupan capacidad antes de generar propuestas y un bloque con asignaciones bloqueadas inválidas produce `invalid_input` en lugar de una corrección silenciosa.
+
+## Proyección multibloque
+
+La generación de varios días y bloques mantiene un estado de ciclos proyectado separado del historial real. El historial de entrada sigue siendo evidencia persistida: solo sus asignaciones `completed` cuentan como realizadas. En cambio, una asignación generada en un bloque anterior de la misma ejecución se conserva como asignación proyectada y afecta la selección de los bloques posteriores sin falsear su estado como completado.
+
+Al completar un ciclo proyectado, el siguiente se abre al comenzar el próximo bloque cronológico. Su snapshot se construye con las actividades que en ese momento están activas y son elegibles para la categoría del grupo. Una indisponibilidad temporal no elimina requisitos del ciclo. Una asignación bloqueada futura solo ocupa capacidad y actualiza el ciclo cuando se alcanza exactamente su fecha y bloque; un grupo sin asignación no avanza.
+
+Los campos `startedInSlot` y `completedInSlot` son la referencia temporal autoritativa de un ciclo proyectado. Los instantes ISO de su `ActivityCycle` son marcadores UTC deterministas exigidos por el contrato compartido y no deben persistirse como si fueran eventos reales. La confirmación operativa futura deberá crear los instantes reales y actualizar el historial persistido.

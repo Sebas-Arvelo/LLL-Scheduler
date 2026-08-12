@@ -70,6 +70,8 @@ export interface SchedulingInput {
   activityEligibility: readonly ActivityEligibility[];
   cycleSnapshots: readonly ActivityCycleSnapshot[];
   history: readonly Assignment[];
+  /** Assignments from earlier slots in the same in-memory generation. */
+  projectedAssignments?: readonly Assignment[];
   lockedAssignments: readonly Assignment[];
   hardConstraints: SchedulingHardConstraints;
   preferences?: SchedulingPreferences;
@@ -96,6 +98,7 @@ export type SchedulingDiagnosticCode =
   | 'INACTIVE_GROUP_SKIPPED'
   | 'INVALID_SCHEDULING_INPUT'
   | 'LOCKED_ASSIGNMENT_OUTSIDE_TARGET'
+  | 'LOCKED_ASSIGNMENT_OUTSIDE_GENERATION'
   | 'INVALID_LOCKED_ASSIGNMENT'
   | 'DUPLICATE_AVAILABILITY'
   | 'PARTICIPANT_COUNT_REQUIRED';
@@ -112,6 +115,8 @@ export interface SchedulingMetrics {
   evaluatedGroupCount: number;
   inactiveGroupCount: number;
   lockedAssignmentCount: number;
+  branchAndBoundNodes: number;
+  branchAndBoundBranches: number;
   assignedGroupCount: number;
   unassignedGroupCount: number;
 }

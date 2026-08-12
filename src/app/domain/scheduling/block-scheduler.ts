@@ -35,6 +35,11 @@ interface SearchState {
   solution: MatchingSolution;
 }
 
+interface ParticipantCapacitySolution extends MatchingSolution {
+  branchAndBoundNodes: number;
+  branchAndBoundBranches: number;
+}
+
 const DEFAULT_SEED = 0;
 const DEFAULT_COSTS = {
   pendingCycleActivity: 10_000_000_000,
@@ -191,8 +196,11 @@ function solveWithParticipantCapacity(
   groupsById: ReadonlyMap<GroupId, CampGroup>,
   activities: ReadonlyMap<ActivityId, EffectiveActivity>,
   lockedParticipantLoad: ReadonlyMap<ActivityId, number>,
-): MatchingSolution {
+): ParticipantCapacitySolution {
+  let branchAndBoundNodes = 0;
+  let branchAndBoundBranches = 0;
   const makeState = (forbiddenEdges: ReadonlySet<string>): SearchState => {
+    branchAndBoundNodes += 1;
     const signature = [...forbiddenEdges].sort().join('|');
     return {
       forbiddenEdges,
@@ -215,7 +223,7 @@ function solveWithParticipantCapacity(
     queue.sort(compareSearchState);
     const state = queue.shift()!;
     const violation = participantViolation(state.solution.matches, groupsById, activities, lockedParticipantLoad);
-    if (!violation) return state.solution;
+    if (!violation) return { ...state.solution, branchAndBoundNodes, branchAndBoundBranches };
 
     for (const groupId of violation.groupIds) {
       const forbiddenEdges = new Set(state.forbiddenEdges);
@@ -223,12 +231,13 @@ function solveWithParticipantCapacity(
       const signature = [...forbiddenEdges].sort().join('|');
       if (!visited.has(signature)) {
         visited.add(signature);
+        branchAndBoundBranches += 1;
         queue.push(makeState(forbiddenEdges));
       }
     }
   }
 
-  return { matches: new Map(), flow: 0, cost: 0 };
+  return { matches: new Map(), flow: 0, cost: 0, branchAndBoundNodes, branchAndBoundBranches };
 }
 
 export function scheduleBlock(input: SchedulingInput): SchedulingResult {
@@ -373,6 +382,8 @@ export function scheduleBlock(input: SchedulingInput): SchedulingResult {
     evaluatedGroupCount: activeGroups.filter((group) => !lockedGroupIds.has(group.id)).length,
     inactiveGroupCount: inactiveGroups.length,
     lockedAssignmentCount: relevantLocked.length,
+    branchAndBoundNodes: 0,
+    branchAndBoundBranches: 0,
   };
 
   if (errors.length > 0) {
@@ -481,18 +492,23 @@ export function scheduleBlock(input: SchedulingInput): SchedulingResult {
 
   const cycleByGroup = currentCycleByGroup(input.cycleSnapshots);
   const completedHistory = input.history.filter((assignment) => assignment.status === 'completed');
+  const projectedHistory = input.projectedAssignments ?? [];
+  const relevantHistory = [...completedHistory, ...projectedHistory];
   const historyCount = new Map<string, number>();
   const groupHistoryCount = new Map<GroupId, number>();
   const recentHistoryCount = new Map<string, number>();
-  for (const assignment of completedHistory) {
+  for (const assignment of relevantHistory) {
     const key = matchingEdgeKey(assignment.groupId, assignment.activityId);
     historyCount.set(key, (historyCount.get(key) ?? 0) + 1);
     groupHistoryCount.set(assignment.groupId, (groupHistoryCount.get(assignment.groupId) ?? 0) + 1);
   }
   for (const groupId of schedulableGroupIds) {
-    const recent = completedHistory
-      .filter((assignment) => assignment.groupId === groupId)
-      .sort((left, right) => right.date.localeCompare(left.date))
+    const recent = [
+      ...projectedHistory.filter((assignment) => assignment.groupId === groupId).reverse(),
+      ...completedHistory
+        .filter((assignment) => assignment.groupId === groupId)
+        .sort((left, right) => right.date.localeCompare(left.date)),
+    ]
       .slice(0, 3);
     for (const assignment of recent) {
       const key = matchingEdgeKey(groupId, assignment.activityId);
@@ -575,6 +591,8 @@ export function scheduleBlock(input: SchedulingInput): SchedulingResult {
     candidateCount: [...candidatesByGroup.values()].reduce((sum, candidates) => sum + candidates.length, 0),
     assignedGroupCount: allAssignments.length,
     unassignedGroupCount: unassigned.length,
+    branchAndBoundNodes: solution.branchAndBoundNodes,
+    branchAndBoundBranches: solution.branchAndBoundBranches,
   };
 
   return {
