@@ -75,6 +75,30 @@ export interface SchedulePersistenceInput extends ConfigurationSnapshot {
   result: ScheduleGenerationResult;
 }
 
+export function mapSeasonConfiguration(configuration: ConfigurationSnapshot): ConfigurationSnapshot {
+  const categoryIds = new Set(configuration.categories.map((category) => category.id));
+  const activityIds = new Set(configuration.activities.map((activity) => activity.id));
+  if (configuration.groups.some((group) => !categoryIds.has(group.categoryId))) {
+    throw new Error('La configuración contiene un grupo con categoría desconocida.');
+  }
+  if (configuration.eligibility.some(
+    (entry) => !activityIds.has(entry.activityId) || !categoryIds.has(entry.groupCategoryId),
+  )) {
+    throw new Error('La configuración contiene una relación de elegibilidad inválida.');
+  }
+  if (configuration.timeBlocks.some((block) => block.seasonId !== configuration.season.id)) {
+    throw new Error('La configuración contiene un bloque de otra temporada.');
+  }
+  return {
+    season: { ...configuration.season },
+    categories: configuration.categories.map((category) => ({ ...category })),
+    groups: configuration.groups.map((group) => ({ ...group })),
+    activities: configuration.activities.map((activity) => ({ ...activity })),
+    eligibility: configuration.eligibility.map((entry) => ({ ...entry })),
+    timeBlocks: configuration.timeBlocks.map((block) => ({ ...block })),
+  };
+}
+
 export function buildCreateScheduleRequest(input: SchedulePersistenceInput): CreateScheduleRequest {
   return {
     seasonId: input.season.id,
@@ -116,8 +140,10 @@ export function buildCreateScheduleRequest(input: SchedulePersistenceInput): Cre
 export class HttpScheduleApi implements ScheduleApi {
   constructor(private readonly baseUrl = '/api') {}
 
-  getSeasonConfiguration(seasonId: string): Promise<ConfigurationSnapshot> {
-    return this.request<ConfigurationSnapshot>(`/seasons/${encodeURIComponent(seasonId)}/config`);
+  async getSeasonConfiguration(seasonId: string): Promise<ConfigurationSnapshot> {
+    return mapSeasonConfiguration(
+      await this.request<ConfigurationSnapshot>(`/seasons/${encodeURIComponent(seasonId)}/config`),
+    );
   }
 
   saveSchedule(request: CreateScheduleRequest): Promise<StoredSchedule> {

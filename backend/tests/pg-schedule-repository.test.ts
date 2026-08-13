@@ -8,6 +8,7 @@ import type { QueryResult, QueryResultRow } from 'pg';
 import type { DatabasePool, TransactionClient } from '../src/db/database';
 import { PgScheduleRepository } from '../src/repositories/schedule-repository';
 import { validRequest } from './fixtures';
+import { requireSafeTestDatabaseUrl } from './test-database';
 
 function emptyResult<T extends QueryResultRow>(): QueryResult<T> {
   return { command: '', rowCount: 0, oid: 0, rows: [], fields: [] };
@@ -51,4 +52,37 @@ test('initial migration protects duplicate assignments and eligibility at databa
   assert.match(migration, /UNIQUE \(schedule_id, group_id, assignment_date, time_block_id\)/);
   assert.match(migration, /REFERENCES schedules\(id\) ON DELETE CASCADE/);
   assert.match(migration, /max_groups integer NOT NULL CHECK \(max_groups >= 1\)/);
+});
+
+test('PostgreSQL integration guard requires a distinct local database ending in _test', () => {
+  assert.throws(() => requireSafeTestDatabaseUrl({}), /TEST_DATABASE_URL is required/);
+  assert.throws(
+    () => requireSafeTestDatabaseUrl({ TEST_DATABASE_URL: 'postgresql://localhost/lll_scheduler_dev' }),
+    /must end with _test/,
+  );
+  assert.throws(
+    () => requireSafeTestDatabaseUrl({ TEST_DATABASE_URL: 'postgresql://db.example.com/lll_scheduler_test' }),
+    /only a local PostgreSQL host/,
+  );
+  assert.throws(
+    () => requireSafeTestDatabaseUrl({
+      DATABASE_URL: 'postgresql://localhost/lll_scheduler_test',
+      TEST_DATABASE_URL: 'postgresql://localhost/lll_scheduler_test',
+    }),
+    /must not be the same database/,
+  );
+  assert.throws(
+    () => requireSafeTestDatabaseUrl({
+      DATABASE_URL: 'postgresql://dev-user@localhost/lll_scheduler_test',
+      TEST_DATABASE_URL: 'postgresql://test-user@127.0.0.1:5432/lll_scheduler_test',
+    }),
+    /must not be the same database/,
+  );
+  assert.equal(
+    requireSafeTestDatabaseUrl({
+      DATABASE_URL: 'postgresql://localhost/lll_scheduler_dev',
+      TEST_DATABASE_URL: 'postgresql://localhost/lll_scheduler_test',
+    }),
+    'postgresql://localhost/lll_scheduler_test',
+  );
 });

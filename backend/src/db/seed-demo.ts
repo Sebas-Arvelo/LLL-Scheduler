@@ -1,7 +1,8 @@
 import { readEnvironment } from '../config/environment';
-import { createDatabasePool, withTransaction } from './database';
+import { createDatabasePool, type DatabasePool, withTransaction } from './database';
 
-const SEASON_ID = 'season-demo-2026';
+export const DEMO_SEASON_ID = 'season-demo-2026';
+export const DEMO_COUNTS = { seasons: 1, categories: 4, groups: 36, activities: 18, eligibility: 72, blocks: 4 } as const;
 
 const categories = [
   ['sabana', 'Cabañas de Sabana', 12],
@@ -38,77 +39,83 @@ const blocks = [
   ['block-4', 'Bloque 4', 4, '15:30', '16:45'],
 ] as const;
 
-async function seedDemo(): Promise<void> {
-  const environment = readEnvironment();
-  if (environment.nodeEnv === 'production') throw new Error('The demo seed is disabled in production.');
-  const pool = createDatabasePool(environment);
-  try {
-    await withTransaction(pool, async (client) => {
-      await client.query(
-        `INSERT INTO seasons (id, name, start_date, end_date, active)
+export async function seedDemo(pool: DatabasePool): Promise<void> {
+  await withTransaction(pool, async (client) => {
+    await client.query(
+      `INSERT INTO seasons (id, name, start_date, end_date, active)
          VALUES ($1, $2, $3, $4, true)
          ON CONFLICT (id) DO UPDATE SET
            name = EXCLUDED.name, start_date = EXCLUDED.start_date,
            end_date = EXCLUDED.end_date, active = EXCLUDED.active, updated_at = now()`,
-        [SEASON_ID, 'Temporada demo 2026', '2026-08-01', '2026-08-21'],
+      [DEMO_SEASON_ID, 'Temporada demo 2026', '2026-08-01', '2026-08-21'],
+    );
+
+    for (const [categoryId, name, groupCount] of categories) {
+      await client.query(
+        `INSERT INTO group_categories (id, name, active) VALUES ($1, $2, true)
+         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, active = EXCLUDED.active, updated_at = now()`,
+        [categoryId, name],
       );
-
-      for (const [categoryId, name, groupCount] of categories) {
+      for (let index = 1; index <= groupCount; index += 1) {
         await client.query(
-          `INSERT INTO group_categories (id, name, active) VALUES ($1, $2, true)
-           ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, active = EXCLUDED.active, updated_at = now()`,
-          [categoryId, name],
-        );
-        for (let index = 1; index <= groupCount; index += 1) {
-          await client.query(
-            `INSERT INTO camp_groups (id, season_id, category_id, name, participant_count, active)
-             VALUES ($1, $2, $3, $4, 10, true)
-             ON CONFLICT (id) DO UPDATE SET
-               season_id = EXCLUDED.season_id, category_id = EXCLUDED.category_id,
-               name = EXCLUDED.name, participant_count = EXCLUDED.participant_count,
-               active = EXCLUDED.active, updated_at = now()`,
-            [`${categoryId}-${index}`, SEASON_ID, categoryId, `${name} ${index}`],
-          );
-        }
-      }
-
-      for (const [activityId, name, displayCategory, maxGroups] of activities) {
-        await client.query(
-          `INSERT INTO activities (id, name, display_category, max_groups, active)
-           VALUES ($1, $2, $3, $4, true)
+          `INSERT INTO camp_groups (id, season_id, category_id, name, participant_count, active)
+           VALUES ($1, $2, $3, $4, 10, true)
            ON CONFLICT (id) DO UPDATE SET
-             name = EXCLUDED.name, display_category = EXCLUDED.display_category,
-             max_groups = EXCLUDED.max_groups, active = EXCLUDED.active, updated_at = now()`,
-          [activityId, name, displayCategory, maxGroups],
+             season_id = EXCLUDED.season_id, category_id = EXCLUDED.category_id,
+             name = EXCLUDED.name, participant_count = EXCLUDED.participant_count,
+             active = EXCLUDED.active, updated_at = now()`,
+          [`${categoryId}-${index}`, DEMO_SEASON_ID, categoryId, `${name} ${index}`],
         );
-        for (const [categoryId] of categories) {
-          await client.query(
-            `INSERT INTO activity_eligibility (activity_id, group_category_id)
-             VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-            [activityId, categoryId],
-          );
-        }
       }
+    }
 
-      for (const [blockId, name, order, startTime, endTime] of blocks) {
+    for (const [activityId, name, displayCategory, maxGroups] of activities) {
+      await client.query(
+        `INSERT INTO activities (id, name, display_category, max_groups, active)
+         VALUES ($1, $2, $3, $4, true)
+         ON CONFLICT (id) DO UPDATE SET
+           name = EXCLUDED.name, display_category = EXCLUDED.display_category,
+           max_groups = EXCLUDED.max_groups, active = EXCLUDED.active, updated_at = now()`,
+        [activityId, name, displayCategory, maxGroups],
+      );
+      for (const [categoryId] of categories) {
         await client.query(
-          `INSERT INTO time_blocks (id, season_id, name, sort_order, start_time, end_time, active)
-           VALUES ($1, $2, $3, $4, $5, $6, true)
-           ON CONFLICT (id) DO UPDATE SET
-             season_id = EXCLUDED.season_id, name = EXCLUDED.name,
-             sort_order = EXCLUDED.sort_order, start_time = EXCLUDED.start_time,
-             end_time = EXCLUDED.end_time, active = EXCLUDED.active, updated_at = now()`,
-          [blockId, SEASON_ID, name, order, startTime, endTime],
+          `INSERT INTO activity_eligibility (activity_id, group_category_id)
+           VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+          [activityId, categoryId],
         );
       }
-    });
-    process.stdout.write(`Demo configuration seeded for ${SEASON_ID}.\n`);
+    }
+
+    for (const [blockId, name, order, startTime, endTime] of blocks) {
+      await client.query(
+        `INSERT INTO time_blocks (id, season_id, name, sort_order, start_time, end_time, active)
+         VALUES ($1, $2, $3, $4, $5, $6, true)
+         ON CONFLICT (id) DO UPDATE SET
+           season_id = EXCLUDED.season_id, name = EXCLUDED.name,
+           sort_order = EXCLUDED.sort_order, start_time = EXCLUDED.start_time,
+           end_time = EXCLUDED.end_time, active = EXCLUDED.active, updated_at = now()`,
+        [blockId, DEMO_SEASON_ID, name, order, startTime, endTime],
+      );
+    }
+  });
+}
+
+async function seedDemoCommand(): Promise<void> {
+  const environment = readEnvironment();
+  if (environment.nodeEnv === 'production') throw new Error('The demo seed is disabled in production.');
+  const pool = createDatabasePool(environment);
+  try {
+    await seedDemo(pool);
+    process.stdout.write(`Demo configuration seeded for ${DEMO_SEASON_ID}.\n`);
   } finally {
     await pool.end();
   }
 }
 
-seedDemo().catch((error: unknown) => {
-  process.stderr.write(`Demo seed failed: ${error instanceof Error ? error.message : 'Unknown error'}\n`);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  seedDemoCommand().catch((error: unknown) => {
+    process.stderr.write(`Demo seed failed: ${error instanceof Error ? error.message : 'Unknown error'}\n`);
+    process.exitCode = 1;
+  });
+}

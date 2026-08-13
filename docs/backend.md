@@ -38,10 +38,34 @@ Las actividades son globales en esta primera versión; grupos y bloques pertenec
 
 ## Requisitos y configuración local
 
-1. Usa la versión de Node indicada en `.nvmrc` y ejecuta `npm install`.
-2. Instala PostgreSQL localmente o proporciona una instancia de desarrollo accesible.
-3. Crea una base de desarrollo dedicada. No reutilices una base de producción ni la base de tests.
-4. Copia `.env.example` a `.env` y reemplaza `DATABASE_URL` con credenciales locales reales.
+La versión requerida por el proyecto es Node `22.23.2`, indicada en `.nvmrc`. En Windows, con NVM for Windows instalado:
+
+```powershell
+nvm install 22.23.2
+nvm use 22.23.2
+node --version
+npm install
+```
+
+No desinstales otras versiones de Node. Si `nvm` no existe, instala primero NVM for Windows desde su distribución oficial o instala Node 22.23.2 mediante el instalador oficial. En la validación de Fase 6.5 de esta máquina no estaban instalados NVM ni PostgreSQL; por ello no se asumieron credenciales ni se ejecutaron operaciones de base de datos.
+
+PostgreSQL debe estar instalado como servicio local y `psql` debe estar disponible. Un gestor estándar disponible en Windows puede mostrar la opción de instalación con `winget search PostgreSQL`; revisa el identificador y versión antes de ejecutar cualquier instalación del sistema.
+
+Conéctate con un rol PostgreSQL local que tú controles y crea dos bases separadas:
+
+```powershell
+createdb lll_scheduler_dev
+createdb lll_scheduler_test
+```
+
+Si el servidor requiere usuario o contraseña, pásalos mediante las opciones normales de PostgreSQL y completa las URLs locales con esas credenciales. No copies contraseñas a archivos versionados ni reutilices credenciales de otros proyectos.
+
+Después:
+
+1. Copia `.env.example` a `.env`.
+2. Define `DATABASE_URL` apuntando exclusivamente a `lll_scheduler_dev`.
+3. Define `TEST_DATABASE_URL` apuntando exclusivamente a `lll_scheduler_test`.
+4. Mantén ambas URLs diferentes.
 
 Variables disponibles:
 
@@ -58,11 +82,16 @@ Variables disponibles:
 
 ## Puesta en marcha
 
-Ejecuta en terminales separadas:
+En PowerShell, verifica primero `node --version` y después prepara desarrollo:
 
-```bash
+```powershell
 npm run db:migrate
 npm run db:seed:demo
+```
+
+Los dos comandos pueden repetirse: migraciones ya aplicadas se omiten y el seed usa upserts/constraints para no duplicar datos. Levanta los procesos en terminales separadas:
+
+```powershell
 npm run backend:start
 npm start
 ```
@@ -100,15 +129,29 @@ Las asignaciones siguen apuntando mediante claves foráneas a las entidades rela
 
 ## Pruebas y seguridad de datos
 
-```bash
+Pruebas rápidas, que no acceden a PostgreSQL:
+
+```powershell
 npm run backend:test
 npm test
 npm run build
 ```
 
-La suite backend usa repositorios en memoria para probar la API sin base compartida y un pool controlado para comprobar rollback. También inspecciona las restricciones esenciales de la migración. No toca una base de desarrollo.
+Integración PostgreSQL real:
 
-Una futura suite de integración PostgreSQL debe usar exclusivamente `TEST_DATABASE_URL`, apuntar a una base cuyo nombre deje claro que es de tests, ejecutar migraciones al comenzar y limpiar solo esa base. Si la variable falta, esas pruebas deben omitirse; nunca deben recurrir silenciosamente a `DATABASE_URL`.
+```powershell
+npm run backend:test:postgres
+```
+
+La suite rápida usa repositorios en memoria y un pool controlado. La suite PostgreSQL recrea el schema `public` de la base de test, migra dos veces, ejecuta el seed dos veces, prueba repositorios y API reales, verifica snapshot, rollback y constraints. Si `TEST_DATABASE_URL` falta, se reporta como omitida.
+
+Antes de limpiar datos, la suite PostgreSQL se niega a continuar salvo que:
+
+- el nombre de base termine en `_test`;
+- el host sea `localhost`, `127.0.0.1` o `::1`;
+- `TEST_DATABASE_URL` sea diferente de `DATABASE_URL`.
+
+Nunca usa `DATABASE_URL` como fallback. La base de desarrollo no se limpia desde tests.
 
 ## Evolución prevista
 

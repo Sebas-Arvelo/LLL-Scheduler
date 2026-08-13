@@ -9,6 +9,7 @@
     "backend:build": "tsc -p backend/tsconfig.json",
     "backend:start": "npm run backend:build && node backend/dist/src/server.js",
     "backend:test": "npm run backend:build && node --test backend/dist/tests/*.test.js",
+    "backend:test:postgres": "npm run backend:build && node --test backend/dist/tests/*.integration.js",
     "db:migrate": "npm run backend:build && node backend/dist/src/db/migrate.js",
     "db:seed:demo": "npm run backend:build && node backend/dist/src/db/seed-demo.js"
   },
