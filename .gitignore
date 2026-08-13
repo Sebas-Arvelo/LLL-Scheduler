@@ -3,6 +3,7 @@
 
 # Angular build output and cache
 /dist/
+/backend/dist/
 /.angular/
 /coverage/
 /out-tsc/

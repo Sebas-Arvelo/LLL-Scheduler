@@ -315,6 +315,11 @@ input:focus {
   border: 1px solid rgba(15, 107, 51, 0.2);
 }
 
+.generation-actions {
+  display: flex;
+  gap: 10px;
+}
+
 .message {
   margin-bottom: 10px;
   padding: 12px 14px;

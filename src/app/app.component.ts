@@ -33,6 +33,11 @@ import {
   type ScheduleGridRow,
   type ScheduleGridView,
 } from './schedule-ui';
+import {
+  HttpScheduleApi,
+  buildCreateScheduleRequest,
+  type ScheduleApi,
+} from './core/api/schedule-api';
 
 interface ProjectedCycleView {
   groupName: string;
@@ -60,6 +65,7 @@ const DIAGNOSTIC_MESSAGES: Readonly<Record<SchedulingDiagnosticCode, string>> = 
   styleUrl: './app.component.css',
 })
 export class AppComponent {
+  scheduleApi: ScheduleApi = new HttpScheduleApi();
   season: Season = { ...DEMO_SEASON };
   groupCategories: GroupCategory[] = DEMO_GROUP_CATEGORIES.map((category) => ({ ...category }));
   groupConfigurations: GroupCategoryConfiguration[] = DEMO_GROUP_CATEGORIES.map((category) => ({
@@ -88,6 +94,11 @@ export class AppComponent {
   generatedActivities: readonly Activity[] = [];
   generatedCategories: readonly GroupCategory[] = [];
   generatedTimeBlocks: readonly TimeBlock[] = [];
+  generatedSeason?: Season;
+  generatedEligibility: readonly ActivityEligibility[] = [];
+  saveState: 'idle' | 'saving' | 'saved' | 'error' = 'idle';
+  saveMessage = '';
+  savedScheduleId?: string;
   uiErrors: string[] = [];
 
   get groups() {
@@ -208,7 +219,14 @@ export class AppComponent {
   }
 
   markScheduleStale(): void {
-    if (this.generationResult) this.scheduleStale = true;
+    if (this.generationResult) {
+      this.scheduleStale = true;
+      if (this.saveState !== 'saving') {
+        this.saveState = 'idle';
+        this.saveMessage = '';
+        this.savedScheduleId = undefined;
+      }
+    }
   }
 
   setViewMode(mode: 'groups' | 'activities'): void {
@@ -250,8 +268,10 @@ export class AppComponent {
     });
     this.generationResult = generateSchedule(input);
     this.generatedGroups = groups.map((group) => ({ ...group }));
+    this.generatedSeason = { ...this.season };
     this.generatedActivities = this.activities.map((activity) => ({ ...activity }));
     this.generatedCategories = this.groupCategories.map((category) => ({ ...category }));
+    this.generatedEligibility = this.activityEligibility.map((entry) => ({ ...entry }));
     this.generatedTimeBlocks = this.timeBlocks.map((block) => ({ ...block }));
     this.scheduleGrid = buildScheduleGrid(
       this.generationResult,
@@ -261,10 +281,48 @@ export class AppComponent {
       this.generatedTimeBlocks,
     );
     this.scheduleStale = false;
+    this.saveState = 'idle';
+    this.saveMessage = '';
+    this.savedScheduleId = undefined;
     const firstSlot = this.generationResult.blocks[0]?.slot;
     this.selectedActivityDate = firstSlot?.date ?? '';
     this.selectedActivityBlockId = firstSlot?.timeBlockId ?? '';
     this.refreshActivitySlotView();
+  }
+
+  async saveSchedule(): Promise<void> {
+    if (!this.generationResult || !this.generatedSeason || this.scheduleStale || this.saveState === 'saving') return;
+    if (this.generationResult.status === 'invalid_input') {
+      this.saveState = 'error';
+      this.saveMessage = 'No se puede guardar una programación con errores de entrada.';
+      return;
+    }
+
+    this.saveState = 'saving';
+    this.saveMessage = '';
+    try {
+      const stored = await this.scheduleApi.saveSchedule(
+        buildCreateScheduleRequest({
+          season: this.generatedSeason,
+          categories: this.generatedCategories,
+          groups: this.generatedGroups,
+          activities: this.generatedActivities,
+          eligibility: this.generatedEligibility,
+          timeBlocks: this.generatedTimeBlocks,
+          rangeStart: this.startDate,
+          rangeEnd: this.endDate,
+          name: `${this.generatedSeason.name} · ${this.startDate}–${this.endDate}`,
+          result: this.generationResult,
+        }),
+      );
+      this.savedScheduleId = stored.schedule.id;
+      this.saveState = 'saved';
+      this.saveMessage = `Programación guardada con ID ${stored.schedule.id}.`;
+    } catch (error) {
+      this.savedScheduleId = undefined;
+      this.saveState = 'error';
+      this.saveMessage = error instanceof Error ? error.message : 'No se pudo guardar la programación.';
+    }
   }
 
   trackById(_: number, item: { id: string }): string {
@@ -301,6 +359,9 @@ export class AppComponent {
   private validateUiConfiguration(): string[] {
     const errors: string[] = [];
     const dates = enumerateLocalDates(this.startDate, this.endDate);
+    if (!Number.isSafeInteger(this.seed) || this.seed < 0 || this.seed > 4_294_967_295) {
+      errors.push('La semilla debe ser un entero entre 0 y 4294967295.');
+    }
     if (dates.length === 0) errors.push('Selecciona un rango de fechas válido.');
     if (dates.some((date) => date < this.season.startDate || date > this.season.endDate)) {
       errors.push('El rango debe estar completamente dentro de la temporada.');

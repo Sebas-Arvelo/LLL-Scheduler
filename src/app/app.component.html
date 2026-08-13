@@ -187,13 +187,25 @@
         <p class="panel-kicker">Motor real</p>
         <h2>Programación generada</h2>
       </div>
-      <button type="button" class="primary-button" (click)="generate()">Generar programación</button>
+      <div class="generation-actions">
+        <button
+          type="button"
+          class="secondary-button"
+          (click)="saveSchedule()"
+          [disabled]="!generationResult || scheduleStale || saveState === 'saving'"
+        >
+          {{ saveState === 'saving' ? 'Guardando…' : 'Guardar programación' }}
+        </button>
+        <button type="button" class="primary-button" (click)="generate()">Generar programación</button>
+      </div>
     </div>
 
     <div class="message error-message" *ngFor="let message of uiErrors">{{ message }}</div>
     <div class="message stale-message" *ngIf="scheduleStale">
       <strong>Programación desactualizada.</strong> La configuración cambió. Vuelve a generar la programación.
     </div>
+    <div class="message" *ngIf="saveState === 'saved'">{{ saveMessage }}</div>
+    <div class="message error-message" *ngIf="saveState === 'error'">{{ saveMessage }}</div>
     <div
       class="message"
       *ngFor="let diagnostic of diagnosticMessages"

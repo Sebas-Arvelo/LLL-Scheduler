@@ -53,7 +53,8 @@
               "buildTarget": "lll-scheduler:build:production"
             },
             "development": {
-              "buildTarget": "lll-scheduler:build:development"
+              "buildTarget": "lll-scheduler:build:development",
+              "proxyConfig": "proxy.conf.json"
             }
           },
           "defaultConfiguration": "development"

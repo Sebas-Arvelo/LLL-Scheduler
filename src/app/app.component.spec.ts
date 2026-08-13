@@ -1,4 +1,25 @@
 import { AppComponent } from './app.component';
+import type { CreateScheduleRequest, ScheduleApi, StoredSchedule } from './core/api/schedule-api';
+
+function storedScheduleFor(request: CreateScheduleRequest): StoredSchedule {
+  return {
+    schedule: {
+      id: '6759862c-22a9-474f-8ec8-0e7f68a2c971',
+      seasonId: request.seasonId,
+      name: request.name,
+      rangeStart: request.rangeStart,
+      rangeEnd: request.rangeEnd,
+      seed: request.seed,
+      algorithmVersion: request.algorithmVersion,
+      status: 'generated',
+      configurationSnapshot: request.configurationSnapshot,
+      createdAt: '2026-08-13T12:00:00.000Z',
+      updatedAt: '2026-08-13T12:00:00.000Z',
+    },
+    assignments: request.assignments,
+    unassigned: request.unassigned,
+  };
+}
 
 describe('AppComponent real scheduling integration', () => {
   it('starts without presenting demo data as a generated schedule', () => {
@@ -98,5 +119,56 @@ describe('AppComponent real scheduling integration', () => {
         )
         .length,
     ).toBe(36);
+  });
+
+  it('saves the generated plan as planned assignments with its exact configuration snapshot', async () => {
+    const component = new AppComponent();
+    let capturedRequest: CreateScheduleRequest | undefined;
+    component.scheduleApi = {
+      saveSchedule: async (request) => {
+        capturedRequest = request;
+        return storedScheduleFor(request);
+      },
+      getSchedule: async () => { throw new Error('Not used by this test.'); },
+      getSeasonConfiguration: async () => { throw new Error('Not used by this test.'); },
+    } satisfies ScheduleApi;
+
+    component.generate();
+    await component.saveSchedule();
+
+    expect(component.saveState).toBe('saved');
+    expect(component.savedScheduleId).toBe('6759862c-22a9-474f-8ec8-0e7f68a2c971');
+    expect(capturedRequest?.assignments.length).toBe(288);
+    expect(capturedRequest?.assignments.every((assignment) => assignment.status === 'planned')).toBeTrue();
+    expect(capturedRequest?.configurationSnapshot.groups.length).toBe(36);
+    expect(capturedRequest?.configurationSnapshot.eligibility).toEqual(component.generatedEligibility);
+    expect(capturedRequest).not.toEqual(jasmine.objectContaining({ projectedCycles: jasmine.anything() }));
+  });
+
+  it('does not save a stale generation', async () => {
+    const component = new AppComponent();
+    const saveSchedule = jasmine.createSpy('saveSchedule');
+    component.scheduleApi = {
+      saveSchedule,
+      getSchedule: async () => { throw new Error('Not used by this test.'); },
+      getSeasonConfiguration: async () => { throw new Error('Not used by this test.'); },
+    } as ScheduleApi;
+
+    component.generate();
+    component.markScheduleStale();
+    await component.saveSchedule();
+
+    expect(saveSchedule).not.toHaveBeenCalled();
+    expect(component.saveState).toBe('idle');
+  });
+
+  it('rejects seeds that the persistence contract cannot store', () => {
+    const component = new AppComponent();
+    component.seed = -1;
+
+    component.generate();
+
+    expect(component.generationResult).toBeUndefined();
+    expect(component.uiErrors).toContain('La semilla debe ser un entero entre 0 y 4294967295.');
   });
 });
