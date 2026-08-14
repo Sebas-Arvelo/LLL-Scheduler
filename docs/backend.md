@@ -1,5 +1,7 @@
 # Backend y persistencia
 
+> Estado actual: esta infraestructura Express/PostgreSQL se conserva como legado opcional. El flujo principal del frontend usa Supabase directamente y está documentado en `docs/supabase.md`; ejecutar Angular ya no requiere este backend ni PostgreSQL local.
+
 ## Alcance de esta fase
 
 El repositorio conserva Angular y el motor de scheduling existentes, y añade una API Node/Express en `backend/`. PostgreSQL es la fuente persistente para la configuración base y las programaciones generadas. El scheduler continúa siendo TypeScript puro y se ejecuta en el frontend; la API valida el resultado y lo almacena, pero no vuelve a generar ni modifica el plan.

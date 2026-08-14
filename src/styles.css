@@ -9,3 +9,33 @@ body {
 * {
   box-sizing: border-box;
 }
+
+.session-loading,
+.auth-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #eef6ef;
+}
+
+.auth-card {
+  width: min(420px, 100%);
+  padding: 32px;
+  border-radius: 24px;
+  background: white;
+  box-shadow: 0 20px 60px rgba(20, 70, 35, 0.14);
+}
+
+.auth-card form,
+.auth-card .field { display: grid; gap: 12px; }
+.auth-card form { margin-top: 24px; }
+.auth-card input { padding: 12px; border: 1px solid #bfd1c2; border-radius: 10px; }
+.auth-link { border: 0; background: transparent; color: #0f6b33; cursor: pointer; }
+.session-bar { display: flex; justify-content: flex-end; align-items: center; gap: 12px; }
+.schedule-name-field { min-width: 240px; }
+.saved-list { display: grid; gap: 10px; }
+.saved-row { display: flex; justify-content: space-between; gap: 16px; padding: 14px; border: 1px solid #d8e6da; border-radius: 14px; }
+.saved-row > div:first-child { display: grid; gap: 4px; }
+.saved-actions { display: flex; align-items: center; gap: 8px; }
+.danger-button { padding: 12px 16px; border: 1px solid #d8a9a9; border-radius: 14px; color: #831b1b; background: #fff5f5; cursor: pointer; font-weight: 700; }

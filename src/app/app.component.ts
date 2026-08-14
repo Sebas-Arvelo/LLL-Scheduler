@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component } from '@angular/core';
+import { Component, type OnDestroy, type OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
 import { DEMO_ACTIVITIES } from './activity-catalog';
@@ -33,11 +33,13 @@ import {
   type ScheduleGridRow,
   type ScheduleGridView,
 } from './schedule-ui';
+import { AuthService, type AuthenticatedUser, type AuthGateway } from './core/supabase/auth.service';
+import { buildSavedScheduleData, restoreSavedSchedule } from './core/supabase/saved-schedule';
 import {
-  HttpScheduleApi,
-  buildCreateScheduleRequest,
-  type ScheduleApi,
-} from './core/api/schedule-api';
+  SavedScheduleService,
+  type SavedScheduleGateway,
+  type SavedScheduleSummary,
+} from './core/supabase/saved-schedule.service';
 
 interface ProjectedCycleView {
   groupName: string;
@@ -64,8 +66,21 @@ const DIAGNOSTIC_MESSAGES: Readonly<Record<SchedulingDiagnosticCode, string>> = 
   templateUrl: './app.component.html',
   styleUrl: './app.component.css',
 })
-export class AppComponent {
-  scheduleApi: ScheduleApi = new HttpScheduleApi();
+export class AppComponent implements OnInit, OnDestroy {
+  authService: AuthGateway = new AuthService();
+  savedScheduleService: SavedScheduleGateway = new SavedScheduleService();
+  authLoading = true;
+  authBusy = false;
+  authMode: 'signIn' | 'signUp' = 'signIn';
+  authEmail = '';
+  authPassword = '';
+  authMessage = '';
+  currentUser?: AuthenticatedUser;
+  savedSchedules: readonly SavedScheduleSummary[] = [];
+  savedSchedulesLoading = false;
+  savedSchedulesMessage = '';
+  scheduleName = '';
+  private unsubscribeAuth?: () => void;
   season: Season = { ...DEMO_SEASON };
   groupCategories: GroupCategory[] = DEMO_GROUP_CATEGORIES.map((category) => ({ ...category }));
   groupConfigurations: GroupCategoryConfiguration[] = DEMO_GROUP_CATEGORIES.map((category) => ({
@@ -100,6 +115,14 @@ export class AppComponent {
   saveMessage = '';
   savedScheduleId?: string;
   uiErrors: string[] = [];
+
+  ngOnInit(): void {
+    void this.initializeSession();
+  }
+
+  ngOnDestroy(): void {
+    this.unsubscribeAuth?.();
+  }
 
   get groups() {
     return buildCampGroups(this.groupCategories, this.groupConfigurations);
@@ -284,6 +307,9 @@ export class AppComponent {
     this.saveState = 'idle';
     this.saveMessage = '';
     this.savedScheduleId = undefined;
+    if (!this.scheduleName.trim()) {
+      this.scheduleName = `${this.season.name} · ${this.startDate}–${this.endDate}`;
+    }
     const firstSlot = this.generationResult.blocks[0]?.slot;
     this.selectedActivityDate = firstSlot?.date ?? '';
     this.selectedActivityBlockId = firstSlot?.timeBlockId ?? '';
@@ -292,6 +318,17 @@ export class AppComponent {
 
   async saveSchedule(): Promise<void> {
     if (!this.generationResult || !this.generatedSeason || this.scheduleStale || this.saveState === 'saving') return;
+    if (!this.currentUser) {
+      this.saveState = 'error';
+      this.saveMessage = 'Inicia sesión para guardar una programación.';
+      return;
+    }
+    const name = this.scheduleName.trim();
+    if (!name) {
+      this.saveState = 'error';
+      this.saveMessage = 'Indica un nombre para la programación.';
+      return;
+    }
     if (this.generationResult.status === 'invalid_input') {
       this.saveState = 'error';
       this.saveMessage = 'No se puede guardar una programación con errores de entrada.';
@@ -301,27 +338,141 @@ export class AppComponent {
     this.saveState = 'saving';
     this.saveMessage = '';
     try {
-      const stored = await this.scheduleApi.saveSchedule(
-        buildCreateScheduleRequest({
+      const stored = await this.savedScheduleService.save({
+        userId: this.currentUser.id,
+        name,
+        seasonName: this.generatedSeason.name,
+        rangeStart: this.startDate,
+        rangeEnd: this.endDate,
+        seed: this.generationResult.diagnostics.seed,
+        algorithmVersion: this.generationResult.diagnostics.engineVersion,
+        scheduleData: buildSavedScheduleData({
           season: this.generatedSeason,
           categories: this.generatedCategories,
           groups: this.generatedGroups,
           activities: this.generatedActivities,
           eligibility: this.generatedEligibility,
           timeBlocks: this.generatedTimeBlocks,
-          rangeStart: this.startDate,
-          rangeEnd: this.endDate,
-          name: `${this.generatedSeason.name} · ${this.startDate}–${this.endDate}`,
           result: this.generationResult,
         }),
-      );
-      this.savedScheduleId = stored.schedule.id;
+      });
+      this.savedScheduleId = stored.id;
       this.saveState = 'saved';
-      this.saveMessage = `Programación guardada con ID ${stored.schedule.id}.`;
+      this.saveMessage = 'Programación guardada correctamente.';
+      await this.loadSavedSchedules();
     } catch (error) {
       this.savedScheduleId = undefined;
       this.saveState = 'error';
       this.saveMessage = error instanceof Error ? error.message : 'No se pudo guardar la programación.';
+    }
+  }
+
+  async submitAuth(): Promise<void> {
+    if (this.authBusy) return;
+    const email = this.authEmail.trim();
+    if (!email || this.authPassword.length < 6) {
+      this.authMessage = 'Indica un email válido y una contraseña de al menos 6 caracteres.';
+      return;
+    }
+    this.authBusy = true;
+    this.authMessage = '';
+    try {
+      if (this.authMode === 'signIn') {
+        this.currentUser = await this.authService.signIn(email, this.authPassword);
+        await this.loadSavedSchedules();
+      } else {
+        const result = await this.authService.signUp(email, this.authPassword);
+        if (result.confirmationRequired) {
+          this.authMessage = 'Cuenta creada. Revisa tu email para confirmarla antes de iniciar sesión.';
+          this.authMode = 'signIn';
+        } else if (result.user) {
+          this.currentUser = result.user;
+          await this.loadSavedSchedules();
+        }
+      }
+    } catch (error) {
+      this.authMessage = error instanceof Error ? error.message : 'No se pudo completar la autenticación.';
+    } finally {
+      this.authBusy = false;
+    }
+  }
+
+  async signOut(): Promise<void> {
+    try {
+      await this.authService.signOut();
+      this.currentUser = undefined;
+      this.savedSchedules = [];
+      this.authPassword = '';
+    } catch (error) {
+      this.savedSchedulesMessage = error instanceof Error ? error.message : 'No se pudo cerrar la sesión.';
+    }
+  }
+
+  async openSavedSchedule(id: string): Promise<void> {
+    if (!this.currentUser) return;
+    this.savedSchedulesMessage = '';
+    try {
+      const stored = await this.savedScheduleService.get(id, this.currentUser.id);
+      const restored = restoreSavedSchedule(stored.scheduleData);
+      this.season = { ...restored.season };
+      this.groupCategories = restored.categories.map((category) => ({ ...category }));
+      this.activities = restored.activities.map((activity) => ({ ...activity }));
+      this.activityEligibility = restored.eligibility.map((entry) => ({ ...entry }));
+      this.timeBlocks = restored.timeBlocks.map((block) => ({ ...block }));
+      this.groupConfigurations = restored.categories.map((category) => {
+        const groups = restored.groups.filter((group) => group.categoryId === category.id);
+        return {
+          categoryId: category.id,
+          count: groups.length,
+          participantCount: groups[0]?.participantCount,
+          active: groups.some((group) => group.active),
+        };
+      });
+      this.generatedSeason = restored.season;
+      this.generatedCategories = restored.categories;
+      this.generatedGroups = restored.groups;
+      this.generatedActivities = restored.activities;
+      this.generatedEligibility = restored.eligibility;
+      this.generatedTimeBlocks = restored.timeBlocks;
+      this.generationResult = restored.result;
+      this.scheduleGrid = buildScheduleGrid(
+        restored.result,
+        restored.groups,
+        restored.categories,
+        restored.activities,
+        restored.timeBlocks,
+      );
+      this.startDate = stored.rangeStart ?? restored.result.blocks[0]?.slot.date ?? this.startDate;
+      this.endDate = stored.rangeEnd ?? restored.result.blocks.at(-1)?.slot.date ?? this.endDate;
+      this.seed = stored.seed ?? restored.result.diagnostics.seed;
+      this.scheduleName = stored.name;
+      this.savedScheduleId = stored.id;
+      this.scheduleStale = false;
+      this.showProjectedCycles = false;
+      this.saveState = 'saved';
+      this.saveMessage = 'Programación guardada abierta.';
+      const firstSlot = restored.result.blocks[0]?.slot;
+      this.selectedActivityDate = firstSlot?.date ?? '';
+      this.selectedActivityBlockId = firstSlot?.timeBlockId ?? '';
+      this.refreshActivitySlotView();
+    } catch (error) {
+      this.savedSchedulesMessage = error instanceof Error ? error.message : 'No se pudo abrir la programación.';
+    }
+  }
+
+  async deleteSavedSchedule(schedule: SavedScheduleSummary): Promise<void> {
+    if (!this.currentUser || !window.confirm(`¿Eliminar “${schedule.name}”?`)) return;
+    this.savedSchedulesMessage = '';
+    try {
+      await this.savedScheduleService.delete(schedule.id, this.currentUser.id);
+      this.savedSchedules = this.savedSchedules.filter((item) => item.id !== schedule.id);
+      if (this.savedScheduleId === schedule.id) {
+        this.savedScheduleId = undefined;
+        this.saveState = 'idle';
+        this.saveMessage = '';
+      }
+    } catch (error) {
+      this.savedSchedulesMessage = error instanceof Error ? error.message : 'No se pudo eliminar la programación.';
     }
   }
 
@@ -354,6 +505,35 @@ export class AppComponent {
             this.generatedTimeBlocks,
           )
         : undefined;
+  }
+
+  private async initializeSession(): Promise<void> {
+    try {
+      this.currentUser = await this.authService.initialize();
+      this.unsubscribeAuth = this.authService.onAuthStateChange((user) => {
+        this.currentUser = user;
+        if (user) void this.loadSavedSchedules();
+        else this.savedSchedules = [];
+      });
+      if (this.currentUser) await this.loadSavedSchedules();
+    } catch (error) {
+      this.authMessage = error instanceof Error ? error.message : 'No se pudo recuperar la sesión.';
+    } finally {
+      this.authLoading = false;
+    }
+  }
+
+  private async loadSavedSchedules(): Promise<void> {
+    if (!this.currentUser) return;
+    this.savedSchedulesLoading = true;
+    this.savedSchedulesMessage = '';
+    try {
+      this.savedSchedules = await this.savedScheduleService.list(this.currentUser.id);
+    } catch (error) {
+      this.savedSchedulesMessage = error instanceof Error ? error.message : 'No se pudieron cargar tus programaciones.';
+    } finally {
+      this.savedSchedulesLoading = false;
+    }
   }
 
   private validateUiConfiguration(): string[] {

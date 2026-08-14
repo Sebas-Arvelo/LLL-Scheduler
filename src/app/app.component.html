@@ -1,4 +1,35 @@
-<main class="shell">
+<div class="session-loading" *ngIf="authLoading">Cargando sesión…</div>
+
+<section class="auth-shell" *ngIf="!authLoading && !currentUser; else authenticatedApp">
+  <article class="auth-card">
+    <img class="brand-logo" src="assets/logo-llanada-full.png" alt="La Llanada Venezuela" />
+    <p class="eyebrow">La Llanada</p>
+    <h1>{{ authMode === 'signIn' ? 'Iniciar sesión' : 'Crear cuenta' }}</h1>
+    <p>Accede para generar y conservar tus programaciones.</p>
+    <form (ngSubmit)="submitAuth()">
+      <label class="field">
+        <span>Email</span>
+        <input type="email" name="authEmail" [(ngModel)]="authEmail" autocomplete="email" required />
+      </label>
+      <label class="field">
+        <span>Contraseña</span>
+        <input type="password" name="authPassword" [(ngModel)]="authPassword" minlength="6" required
+          [autocomplete]="authMode === 'signIn' ? 'current-password' : 'new-password'" />
+      </label>
+      <div class="message error-message" *ngIf="authMessage">{{ authMessage }}</div>
+      <button type="submit" class="primary-button" [disabled]="authBusy">
+        {{ authBusy ? 'Procesando…' : (authMode === 'signIn' ? 'Iniciar sesión' : 'Crear cuenta') }}
+      </button>
+      <button type="button" class="auth-link"
+        (click)="authMode = authMode === 'signIn' ? 'signUp' : 'signIn'; authMessage = ''">
+        {{ authMode === 'signIn' ? 'Crear una cuenta' : 'Ya tengo una cuenta' }}
+      </button>
+    </form>
+  </article>
+</section>
+
+<ng-template #authenticatedApp>
+<main class="shell" *ngIf="currentUser">
   <section class="hero">
     <div class="brand-card">
       <img class="brand-logo" src="assets/logo-llanada-full.png" alt="La Llanada Venezuela" />
@@ -30,6 +61,10 @@
         <strong>{{ requestedDays }} × {{ activeBlocks }}</strong>
         <small>días × bloques · seed {{ seed }}</small>
       </article>
+    </div>
+    <div class="session-bar">
+      <span>{{ currentUser.email }}</span>
+      <button type="button" class="secondary-button" (click)="signOut()">Cerrar sesión</button>
     </div>
   </section>
 
@@ -188,6 +223,10 @@
         <h2>Programación generada</h2>
       </div>
       <div class="generation-actions">
+        <label class="compact-field schedule-name-field">
+          <span>Nombre</span>
+          <input type="text" [(ngModel)]="scheduleName" maxlength="120" placeholder="Nombre de la programación" />
+        </label>
         <button
           type="button"
           class="secondary-button"
@@ -333,6 +372,31 @@
     </ng-template>
   </section>
 
+  <section class="panel saved-panel">
+    <div class="panel-header">
+      <div>
+        <p class="panel-kicker">Supabase</p>
+        <h2>Mis programaciones</h2>
+      </div>
+    </div>
+    <p *ngIf="savedSchedulesLoading">Cargando programaciones…</p>
+    <div class="message error-message" *ngIf="savedSchedulesMessage">{{ savedSchedulesMessage }}</div>
+    <p *ngIf="!savedSchedulesLoading && savedSchedules.length === 0">Aún no tienes programaciones guardadas.</p>
+    <div class="saved-list" *ngIf="savedSchedules.length > 0">
+      <article class="saved-row" *ngFor="let saved of savedSchedules; trackBy: trackById">
+        <div>
+          <strong>{{ saved.name }}</strong>
+          <span>{{ saved.seasonName || 'Temporada sin nombre' }}</span>
+          <small>{{ saved.rangeStart }} — {{ saved.rangeEnd }} · {{ saved.createdAt | date: 'medium' }}</small>
+        </div>
+        <div class="saved-actions">
+          <button type="button" class="secondary-button" (click)="openSavedSchedule(saved.id)">Abrir</button>
+          <button type="button" class="danger-button" (click)="deleteSavedSchedule(saved)">Eliminar</button>
+        </div>
+      </article>
+    </div>
+  </section>
+
   <section class="panel cycle-panel" *ngIf="generationResult">
     <div class="panel-header">
       <div>
@@ -356,3 +420,4 @@
     </div>
   </section>
 </main>
+</ng-template>
