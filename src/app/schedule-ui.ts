@@ -30,6 +30,7 @@ export interface ScheduleGridColumn {
 
 export interface ScheduleGridCell {
   key: string;
+  assignment?: Assignment;
   activityName?: string;
   unassignedReason?: string;
 }
@@ -213,6 +214,7 @@ export function buildScheduleGrid(
         const unassigned = unassignedByCell.get(key);
         return {
           key,
+          ...(assignment ? { assignment } : {}),
           ...(assignment ? { activityName: activityById.get(assignment.activityId)?.name ?? assignment.activityId } : {}),
           ...(unassigned ? { unassignedReason: unassignedReasonMessage(unassigned.reasonCode) } : {}),
         };

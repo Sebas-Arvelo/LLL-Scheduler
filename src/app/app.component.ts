@@ -31,6 +31,7 @@ import {
   type ActivitySlotView,
   type GroupCategoryConfiguration,
   type ScheduleGridRow,
+  type ScheduleGridCell,
   type ScheduleGridView,
 } from './schedule-ui';
 import { AuthService, type AuthenticatedUser, type AuthGateway } from './core/supabase/auth.service';
@@ -40,6 +41,20 @@ import {
   type SavedScheduleGateway,
   type SavedScheduleSummary,
 } from './core/supabase/saved-schedule.service';
+import {
+  AssignmentProgressService,
+  type AssignmentProgressGateway,
+} from './core/supabase/assignment-progress.service';
+import {
+  assignmentProgressKey,
+  currentRealCycles,
+  deriveRealHistory,
+  summarizeProgress,
+  type AssignmentProgress,
+  type AssignmentProgressStatus,
+  type RealActivityCycle,
+  type RealExecutionState,
+} from './execution/real-execution';
 
 interface ProjectedCycleView {
   groupName: string;
@@ -47,6 +62,16 @@ interface ProjectedCycleView {
   status: string;
   pending: readonly string[];
   completed: readonly string[];
+}
+
+interface RealCycleView {
+  groupId: string;
+  groupName: string;
+  currentCycle?: RealActivityCycle;
+  completedCycleCount: number;
+  completedActivities: readonly string[];
+  pending: readonly { id: string; name: string }[];
+  exempted: readonly { id: string; name: string }[];
 }
 
 const DIAGNOSTIC_MESSAGES: Readonly<Record<SchedulingDiagnosticCode, string>> = {
@@ -69,6 +94,7 @@ const DIAGNOSTIC_MESSAGES: Readonly<Record<SchedulingDiagnosticCode, string>> = 
 export class AppComponent implements OnInit, OnDestroy {
   authService: AuthGateway = new AuthService();
   savedScheduleService: SavedScheduleGateway = new SavedScheduleService();
+  assignmentProgressService: AssignmentProgressGateway = new AssignmentProgressService();
   authLoading = true;
   authBusy = false;
   authMode: 'signIn' | 'signUp' = 'signIn';
@@ -114,6 +140,10 @@ export class AppComponent implements OnInit, OnDestroy {
   saveState: 'idle' | 'saving' | 'saved' | 'error' = 'idle';
   saveMessage = '';
   savedScheduleId?: string;
+  executionState: RealExecutionState = { progress: [], cycles: [] };
+  executionStateStatus: 'idle' | 'loading' | 'updating' | 'updated' | 'error' = 'idle';
+  executionMessage = '';
+  updatingProgressId?: string;
   uiErrors: string[] = [];
 
   ngOnInit(): void {
@@ -191,6 +221,43 @@ export class AppComponent implements OnInit, OnDestroy {
         selected,
         activityById,
       );
+    });
+  }
+
+  get progressSummary() {
+    return summarizeProgress(this.executionState.progress);
+  }
+
+  get realHistory() {
+    return deriveRealHistory(this.executionState.history ?? this.executionState.progress);
+  }
+
+  get currentRealCycles(): readonly RealActivityCycle[] {
+    return currentRealCycles(this.executionState.cycles);
+  }
+
+  get realCycleViews(): readonly RealCycleView[] {
+    const activityById = new Map(this.generatedActivities.map((activity) => [activity.id, activity.name]));
+    const historyByGroup = new Map<string, Set<string>>();
+    for (const entry of this.realHistory) {
+      const names = historyByGroup.get(entry.groupId) ?? new Set<string>();
+      names.add(activityById.get(entry.activityId) ?? entry.activityId);
+      historyByGroup.set(entry.groupId, names);
+    }
+    return this.generatedGroups.map((group) => {
+      const groupCycles = this.executionState.cycles.filter((cycle) => cycle.groupId === group.id);
+      const selected = groupCycles.find((cycle) => cycle.status === 'active') ?? groupCycles.at(-1);
+      return {
+        groupId: group.id,
+        groupName: group.name,
+        ...(selected ? { currentCycle: selected } : {}),
+        completedCycleCount: groupCycles.filter((cycle) => cycle.status === 'completed').length,
+        completedActivities: [...(historyByGroup.get(group.id) ?? [])].sort(),
+        pending: selected?.requirements.filter((item) => item.status === 'pending')
+          .map((item) => ({ id: item.id, name: activityById.get(item.activityId) ?? item.activityId })) ?? [],
+        exempted: selected?.requirements.filter((item) => item.status === 'exempted')
+          .map((item) => ({ id: item.id, name: activityById.get(item.activityId) ?? item.activityId })) ?? [],
+      };
     });
   }
 
@@ -307,6 +374,9 @@ export class AppComponent implements OnInit, OnDestroy {
     this.saveState = 'idle';
     this.saveMessage = '';
     this.savedScheduleId = undefined;
+    this.executionState = { progress: [], cycles: [] };
+    this.executionStateStatus = 'idle';
+    this.executionMessage = '';
     if (!this.scheduleName.trim()) {
       this.scheduleName = `${this.season.name} · ${this.startDate}–${this.endDate}`;
     }
@@ -357,6 +427,14 @@ export class AppComponent implements OnInit, OnDestroy {
         }),
       });
       this.savedScheduleId = stored.id;
+      this.executionStateStatus = 'loading';
+      this.executionState = await this.assignmentProgressService.initialize(
+        stored.id,
+        this.currentUser.id,
+        stored.scheduleData.configuration.groups.map((group) => group.id),
+      );
+      this.executionStateStatus = 'updated';
+      this.executionMessage = 'Progreso inicializado.';
       this.saveState = 'saved';
       this.saveMessage = 'Programación guardada correctamente.';
       await this.loadSavedSchedules();
@@ -403,6 +481,7 @@ export class AppComponent implements OnInit, OnDestroy {
       this.currentUser = undefined;
       this.savedSchedules = [];
       this.authPassword = '';
+      this.clearExecutionState();
     } catch (error) {
       this.savedSchedulesMessage = error instanceof Error ? error.message : 'No se pudo cerrar la sesión.';
     }
@@ -414,6 +493,13 @@ export class AppComponent implements OnInit, OnDestroy {
     try {
       const stored = await this.savedScheduleService.get(id, this.currentUser.id);
       const restored = restoreSavedSchedule(stored.scheduleData);
+      this.executionStateStatus = 'loading';
+      this.executionMessage = 'Cargando progreso…';
+      const executionState = await this.assignmentProgressService.initialize(
+        stored.id,
+        this.currentUser.id,
+        restored.groups.map((group) => group.id),
+      );
       this.season = { ...restored.season };
       this.groupCategories = restored.categories.map((category) => ({ ...category }));
       this.activities = restored.activities.map((activity) => ({ ...activity }));
@@ -451,6 +537,9 @@ export class AppComponent implements OnInit, OnDestroy {
       this.showProjectedCycles = false;
       this.saveState = 'saved';
       this.saveMessage = 'Programación guardada abierta.';
+      this.executionState = executionState;
+      this.executionStateStatus = 'updated';
+      this.executionMessage = 'Progreso actualizado.';
       const firstSlot = restored.result.blocks[0]?.slot;
       this.selectedActivityDate = firstSlot?.date ?? '';
       this.selectedActivityBlockId = firstSlot?.timeBlockId ?? '';
@@ -470,6 +559,8 @@ export class AppComponent implements OnInit, OnDestroy {
         this.savedScheduleId = undefined;
         this.saveState = 'idle';
         this.saveMessage = '';
+        this.executionState = { progress: [], cycles: [] };
+        this.executionStateStatus = 'idle';
       }
     } catch (error) {
       this.savedSchedulesMessage = error instanceof Error ? error.message : 'No se pudo eliminar la programación.';
@@ -490,6 +581,66 @@ export class AppComponent implements OnInit, OnDestroy {
 
   trackByActivityView(_: number, activity: { activityId: string }): string {
     return activity.activityId;
+  }
+
+  progressForCell(groupId: string, cell: ScheduleGridCell): AssignmentProgress | undefined {
+    if (!cell.assignment) return undefined;
+    return this.executionState.progress.find((item) => assignmentProgressKey(item) === assignmentProgressKey({
+      groupId,
+      date: cell.assignment!.date,
+      timeBlockId: cell.assignment!.timeBlockId,
+    }));
+  }
+
+  progressForAssignment(groupId: string, date: string, timeBlockId: string): AssignmentProgress | undefined {
+    const key = assignmentProgressKey({ groupId, date, timeBlockId });
+    return this.executionState.progress.find((item) => assignmentProgressKey(item) === key);
+  }
+
+  progressStatusLabel(status: AssignmentProgressStatus): string {
+    return status === 'completed' ? 'Completada' : status === 'cancelled' ? 'Cancelada' : 'Planificada';
+  }
+
+  async changeProgressStatus(progress: AssignmentProgress, status: AssignmentProgressStatus): Promise<void> {
+    if (!this.currentUser || !this.savedScheduleId || this.executionStateStatus === 'updating') return;
+    this.executionStateStatus = 'updating';
+    this.updatingProgressId = progress.id;
+    this.executionMessage = 'Actualizando progreso…';
+    try {
+      await this.assignmentProgressService.setStatus(progress.id, status, this.currentUser.id);
+      await this.reloadExecution();
+      this.executionStateStatus = 'updated';
+      this.executionMessage = 'Progreso actualizado.';
+    } catch (error) {
+      this.executionStateStatus = 'error';
+      this.executionMessage = error instanceof Error ? error.message : 'No se pudo actualizar el progreso.';
+    } finally {
+      this.updatingProgressId = undefined;
+    }
+  }
+
+  async changeRequirementStatus(requirementId: string, status: 'pending' | 'exempted'): Promise<void> {
+    if (!this.currentUser || this.executionStateStatus === 'updating') return;
+    this.executionStateStatus = 'updating';
+    this.executionMessage = 'Actualizando ciclo…';
+    try {
+      await this.assignmentProgressService.setRequirementStatus(requirementId, status, this.currentUser.id);
+      await this.reloadExecution();
+      this.executionStateStatus = 'updated';
+      this.executionMessage = 'Ciclo actualizado.';
+    } catch (error) {
+      this.executionStateStatus = 'error';
+      this.executionMessage = error instanceof Error ? error.message : 'No se pudo actualizar el ciclo.';
+    }
+  }
+
+  private async reloadExecution(): Promise<void> {
+    if (!this.currentUser || !this.savedScheduleId) return;
+    this.executionState = await this.assignmentProgressService.load(
+      this.savedScheduleId,
+      this.currentUser.id,
+      this.generatedGroups.map((group) => group.id),
+    );
   }
 
   private refreshActivitySlotView(): void {
@@ -513,7 +664,10 @@ export class AppComponent implements OnInit, OnDestroy {
       this.unsubscribeAuth = this.authService.onAuthStateChange((user) => {
         this.currentUser = user;
         if (user) void this.loadSavedSchedules();
-        else this.savedSchedules = [];
+        else {
+          this.savedSchedules = [];
+          this.clearExecutionState();
+        }
       });
       if (this.currentUser) await this.loadSavedSchedules();
     } catch (error) {
@@ -534,6 +688,14 @@ export class AppComponent implements OnInit, OnDestroy {
     } finally {
       this.savedSchedulesLoading = false;
     }
+  }
+
+  private clearExecutionState(): void {
+    this.savedScheduleId = undefined;
+    this.executionState = { progress: [], cycles: [] };
+    this.executionStateStatus = 'idle';
+    this.executionMessage = '';
+    this.updatingProgressId = undefined;
   }
 
   private validateUiConfiguration(): string[] {

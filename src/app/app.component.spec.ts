@@ -7,6 +7,8 @@ import type {
   SavedScheduleGateway,
   SavedScheduleRecord,
 } from './core/supabase/saved-schedule.service';
+import type { AssignmentProgressGateway } from './core/supabase/assignment-progress.service';
+import type { AssignmentProgress, RealExecutionState } from './execution/real-execution';
 
 function storedScheduleFor(request: SaveScheduleCommand): SavedScheduleRecord {
   return {
@@ -30,6 +32,34 @@ function savedScheduleGateway(save: (request: SaveScheduleCommand) => Promise<Sa
     list: async () => [],
     get: async () => { throw new Error('Not used by this test.'); },
     delete: async () => undefined,
+  };
+}
+
+function executionStateFor(component: AppComponent, scheduleId = 'saved-1'): RealExecutionState {
+  const instant = '2026-08-15T12:00:00.000Z';
+  return {
+    progress: (component.generationResult?.assignments ?? []).map<AssignmentProgress>((assignment, index) => ({
+      id: `progress-${index}`,
+      userId: 'user-1',
+      savedScheduleId: scheduleId,
+      groupId: assignment.groupId,
+      activityId: assignment.activityId,
+      date: assignment.date,
+      timeBlockId: assignment.timeBlockId,
+      status: 'planned',
+      createdAt: instant,
+      updatedAt: instant,
+    })),
+    cycles: [],
+  };
+}
+
+function assignmentProgressGateway(state: RealExecutionState): AssignmentProgressGateway {
+  return {
+    initialize: async () => state,
+    load: async () => state,
+    setStatus: async () => undefined,
+    setRequirementStatus: async () => undefined,
   };
 }
 
@@ -143,6 +173,7 @@ describe('AppComponent real scheduling integration', () => {
     });
 
     component.generate();
+    component.assignmentProgressService = assignmentProgressGateway(executionStateFor(component));
     await component.saveSchedule();
 
     expect(component.saveState).toBe('saved');
@@ -240,6 +271,13 @@ describe('AppComponent real scheduling integration', () => {
       createdAt: '2026-08-13T12:00:00Z',
       updatedAt: '2026-08-13T12:00:00Z',
     };
+    const plannedExecution = executionStateFor(component);
+    const openedExecution: RealExecutionState = {
+      ...plannedExecution,
+      progress: plannedExecution.progress.map((item, index) => index === 0
+        ? { ...item, status: 'completed', completedAt: '2026-08-15T13:00:00Z' }
+        : item),
+    };
     component.generationResult = undefined;
     component.scheduleGrid = { columns: [], rows: [] };
     component.savedScheduleService = {
@@ -249,6 +287,7 @@ describe('AppComponent real scheduling integration', () => {
         return stored;
       },
     };
+    component.assignmentProgressService = assignmentProgressGateway(openedExecution);
 
     await component.openSavedSchedule('saved-1');
 
@@ -258,5 +297,79 @@ describe('AppComponent real scheduling integration', () => {
     expect(component.scheduleGrid.rows.length).toBe(36);
     expect(component.activitySlotView?.activities.length).toBeGreaterThan(0);
     expect(component.scheduleName).toBe('Plan guardado');
+    expect(component.progressSummary.planned).toBe(287);
+    expect(component.progressSummary.completed).toBe(1);
+    expect(component.progressForCell(component.scheduleGrid.rows[0].group.id, component.scheduleGrid.rows[0].cells[0]))
+      .toBeDefined();
+  });
+
+  it('persists a status change before replacing the visual state', async () => {
+    const component = new AppComponent();
+    component.currentUser = { id: 'user-1' };
+    component.generate();
+    component.savedScheduleId = 'saved-1';
+    const initial = executionStateFor(component);
+    const completed: RealExecutionState = {
+      ...initial,
+      progress: initial.progress.map((item, index) => index === 0
+        ? { ...item, status: 'completed', completedAt: '2026-08-15T13:00:00Z' }
+        : item),
+    };
+    let persistedStatus = '';
+    component.executionState = initial;
+    component.assignmentProgressService = {
+      ...assignmentProgressGateway(completed),
+      setStatus: async (_id, status) => { persistedStatus = status; },
+    };
+
+    await component.changeProgressStatus(initial.progress[0], 'completed');
+
+    expect(persistedStatus).toBe('completed');
+    expect(component.progressSummary.completed).toBe(1);
+    expect(component.progressStatusLabel(component.executionState.progress[0].status)).toBe('Completada');
+    expect(component.executionStateStatus).toBe('updated');
+  });
+
+  it('keeps the previous visual state when persistence fails', async () => {
+    const component = new AppComponent();
+    component.currentUser = { id: 'user-1' };
+    component.generate();
+    component.savedScheduleId = 'saved-1';
+    const initial = executionStateFor(component);
+    component.executionState = initial;
+    component.assignmentProgressService = {
+      ...assignmentProgressGateway(initial),
+      setStatus: async () => { throw new Error('Fallo controlado'); },
+    };
+
+    await component.changeProgressStatus(initial.progress[0], 'cancelled');
+
+    expect(component.executionState.progress[0].status).toBe('planned');
+    expect(component.executionStateStatus).toBe('error');
+    expect(component.executionMessage).toBe('Fallo controlado');
+  });
+
+  it('builds group history from completed progress and real cycle requirements', () => {
+    const component = new AppComponent();
+    component.generate();
+    const initial = executionStateFor(component);
+    const first = initial.progress[0];
+    component.executionState = {
+      progress: [{ ...first, status: 'completed', completedAt: '2026-08-15T13:00:00Z', cycleId: 'cycle-1' }],
+      cycles: [{
+        id: 'cycle-1', userId: 'user-1', groupId: first.groupId, cycleNumber: 1, status: 'active',
+        startedAt: '2026-08-15T12:00:00Z',
+        requirements: [
+          { id: 'req-1', cycleId: 'cycle-1', activityId: first.activityId, status: 'completed' },
+          { id: 'req-2', cycleId: 'cycle-1', activityId: 'arqueria', status: 'pending' },
+          { id: 'req-3', cycleId: 'cycle-1', activityId: 'piscina', status: 'exempted' },
+        ],
+      }],
+    };
+
+    const view = component.realCycleViews.find((item) => item.groupId === first.groupId)!;
+    expect(view.completedActivities.length).toBe(1);
+    expect(view.pending.map((item) => item.name)).toContain('arqueria');
+    expect(view.exempted.map((item) => item.name)).toContain('Piscina: Piscina');
   });
 });

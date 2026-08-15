@@ -115,6 +115,12 @@ export class SavedScheduleService implements SavedScheduleGateway {
   async delete(id: string, userId: string): Promise<void> {
     supabaseClientService.requireConfigured();
     const client = await supabaseClientService.getClient();
+    const { data: completed, error: progressError } = await client.from('assignment_progress')
+      .select('id').eq('saved_schedule_id', id).eq('user_id', userId).eq('status', 'completed').limit(1);
+    if (progressError) throw new Error('No se pudo verificar el historial de la programación.');
+    if (completed && completed.length > 0) {
+      throw new Error('No se puede eliminar una programación que contiene actividades completadas.');
+    }
     const { data, error } = await client.from('saved_schedules').delete()
       .eq('id', id).eq('user_id', userId).select('id').maybeSingle();
     if (error || !data) throw new Error('No se pudo eliminar la programación.');

@@ -89,6 +89,38 @@ h1 {
   gap: 16px;
 }
 
+.execution-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: -4px 0 18px;
+  padding: 14px;
+  border: 1px solid rgba(15, 107, 51, 0.14);
+  border-radius: 16px;
+  background: #f8fcf9;
+}
+
+.execution-summary article {
+  display: grid;
+  gap: 4px;
+}
+
+.execution-summary span {
+  color: #59705e;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.execution-summary strong {
+  font-size: 1.25rem;
+}
+
+.success-message {
+  color: #155c2c;
+  background: #eff9f1;
+  border: 1px solid #b9ddc1;
+}
+
 .hero-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
@@ -428,6 +460,36 @@ input:focus {
   display: block;
 }
 
+.status-badge {
+  width: fit-content;
+  margin-top: 7px;
+  padding: 3px 7px;
+  border: 1px solid #c4d4c7;
+  border-radius: 999px;
+  color: #425b47;
+  background: #f3f7f4;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.status-badge[data-status='completed'] {
+  color: #0f622b;
+  border-color: #9ed3aa;
+  background: #e9f8ed;
+}
+
+.status-badge[data-status='cancelled'] {
+  color: #842626;
+  border-color: #e2aaaa;
+  background: #fff0f0;
+}
+
+.progress-select {
+  margin-top: 7px;
+  padding: 6px 8px;
+  font-size: 0.76rem;
+}
+
 .sticky-column {
   position: sticky;
   left: 0;
@@ -544,6 +606,23 @@ input:focus {
   font-size: 0.84rem;
 }
 
+.operational-card li > div {
+  display: grid;
+  gap: 2px;
+}
+
+.inline-status {
+  display: grid;
+  grid-template-columns: auto minmax(115px, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.inline-status select {
+  padding: 6px 8px;
+  font-size: 0.78rem;
+}
+
 .unassigned-section {
   border-color: #e7b4b4;
   background: #fff8f8;
@@ -587,6 +666,62 @@ input:focus {
   line-height: 1.45;
 }
 
+.real-history-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.real-history-card {
+  border: 1px solid rgba(25, 80, 41, 0.12);
+  border-radius: 16px;
+  background: #f8fcf9;
+}
+
+.real-history-card summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  cursor: pointer;
+}
+
+.real-history-card summary span,
+.history-details p {
+  color: #58705e;
+  font-size: 0.82rem;
+}
+
+.history-details {
+  display: grid;
+  gap: 12px;
+  padding: 0 14px 14px;
+}
+
+.history-details ul {
+  display: grid;
+  gap: 6px;
+  margin: 7px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.history-details li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.compact-action {
+  padding: 5px 8px;
+  color: #155c2c;
+  background: #fff;
+  border: 1px solid rgba(15, 107, 51, 0.2);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
 @media (max-width: 1180px) {
   .hero-grid,
   .metrics-grid {
@@ -618,6 +753,8 @@ input:focus {
   .form-grid,
   .metrics-grid,
   .cycle-list,
+  .execution-summary,
+  .real-history-list,
   .group-config,
   .block-row {
     grid-template-columns: 1fr;

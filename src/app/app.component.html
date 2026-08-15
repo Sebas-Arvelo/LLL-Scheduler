@@ -245,6 +245,11 @@
     </div>
     <div class="message" *ngIf="saveState === 'saved'">{{ saveMessage }}</div>
     <div class="message error-message" *ngIf="saveState === 'error'">{{ saveMessage }}</div>
+    <div class="message" *ngIf="executionStateStatus === 'loading' || executionStateStatus === 'updating'">
+      {{ executionMessage || 'Cargando progreso…' }}
+    </div>
+    <div class="message success-message" *ngIf="executionStateStatus === 'updated'">{{ executionMessage }}</div>
+    <div class="message error-message" *ngIf="executionStateStatus === 'error'">{{ executionMessage }}</div>
     <div
       class="message"
       *ngFor="let diagnostic of diagnosticMessages"
@@ -261,6 +266,13 @@
         <article><span>Cobertura</span><strong>{{ result.metrics.global.coveragePercentage | number: '1.0-1' }}%</strong></article>
         <article><span>Repeticiones prematuras</span><strong>{{ result.metrics.global.prematureRepetitionCount }}</strong></article>
         <article><span>Ciclos completados</span><strong>{{ completedProjectedCycles }}</strong></article>
+      </div>
+
+      <div class="execution-summary" *ngIf="savedScheduleId">
+        <article><span>Planificadas</span><strong>{{ progressSummary.planned }}</strong></article>
+        <article><span>Completadas</span><strong>{{ progressSummary.completed }}</strong></article>
+        <article><span>Canceladas</span><strong>{{ progressSummary.cancelled }}</strong></article>
+        <article><span>Avance real</span><strong>{{ progressSummary.completedPercentage | number: '1.0-1' }}%</strong></article>
       </div>
 
       <div class="view-tabs" role="group" aria-label="Vista de la programación">
@@ -290,6 +302,22 @@
               </th>
               <td *ngFor="let cell of row.cells; trackBy: trackByKey" [class.unassigned-cell]="cell.unassignedReason">
                 <span *ngIf="cell.activityName; else missingAssignment">{{ cell.activityName }}</span>
+                <ng-container *ngIf="progressForCell(row.group.id, cell) as progress">
+                  <span class="status-badge" [attr.data-status]="progress.status">
+                    {{ progressStatusLabel(progress.status) }}
+                  </span>
+                  <select
+                    class="progress-select"
+                    aria-label="Estado de la asignación"
+                    [ngModel]="progress.status"
+                    (ngModelChange)="changeProgressStatus(progress, $event)"
+                    [disabled]="executionStateStatus === 'updating'"
+                  >
+                    <option value="planned">Planificada</option>
+                    <option value="completed">Completada</option>
+                    <option value="cancelled">Cancelada</option>
+                  </select>
+                </ng-container>
                 <ng-template #missingAssignment>
                   <span [title]="cell.unassignedReason ?? ''">{{ cell.unassignedReason ? 'Sin asignación' : '—' }}</span>
                   <small *ngIf="cell.unassignedReason">{{ cell.unassignedReason }}</small>
@@ -343,8 +371,25 @@
               </header>
               <ul>
                 <li *ngFor="let group of activity.groups">
-                  <strong>{{ group.groupName }}</strong>
-                  <span>{{ group.categoryName }}</span>
+                  <div>
+                    <strong>{{ group.groupName }}</strong>
+                    <span>{{ group.categoryName }}</span>
+                  </div>
+                  <ng-container *ngIf="progressForAssignment(group.groupId, slotView.date, slotView.timeBlockId) as progress">
+                    <label class="inline-status">
+                      <span>{{ progressStatusLabel(progress.status) }}</span>
+                      <select
+                        aria-label="Estado de la asignación"
+                        [ngModel]="progress.status"
+                        (ngModelChange)="changeProgressStatus(progress, $event)"
+                        [disabled]="executionStateStatus === 'updating'"
+                      >
+                        <option value="planned">Planificada</option>
+                        <option value="completed">Completada</option>
+                        <option value="cancelled">Cancelada</option>
+                      </select>
+                    </label>
+                  </ng-container>
                 </li>
               </ul>
             </article>
@@ -394,6 +439,54 @@
           <button type="button" class="danger-button" (click)="deleteSavedSchedule(saved)">Eliminar</button>
         </div>
       </article>
+    </div>
+  </section>
+
+  <section class="panel real-history-panel" *ngIf="savedScheduleId">
+    <div class="panel-header">
+      <div>
+        <p class="panel-kicker">Ejecución real</p>
+        <h2>Historial por grupo</h2>
+      </div>
+      <span>{{ currentRealCycles.length }} ciclos activos</span>
+    </div>
+    <div class="real-history-list">
+      <details class="real-history-card" *ngFor="let group of realCycleViews">
+        <summary>
+          <strong>{{ group.groupName }}</strong>
+          <span>
+            {{ group.currentCycle ? ('Ciclo ' + group.currentCycle.cycleNumber) : 'Sin ciclo' }} ·
+            {{ group.completedCycleCount }} completados
+          </span>
+        </summary>
+        <div class="history-details">
+          <p><strong>Realizadas:</strong> {{ group.completedActivities.length ? group.completedActivities.join(', ') : 'Ninguna' }}</p>
+          <div>
+            <strong>Pendientes</strong>
+            <ul *ngIf="group.pending.length; else noPending">
+              <li *ngFor="let requirement of group.pending">
+                <span>{{ requirement.name }}</span>
+                <button type="button" class="compact-action" (click)="changeRequirementStatus(requirement.id, 'exempted')">
+                  Exonerar
+                </button>
+              </li>
+            </ul>
+            <ng-template #noPending><p>Ninguna.</p></ng-template>
+          </div>
+          <div>
+            <strong>Exoneradas</strong>
+            <ul *ngIf="group.exempted.length; else noExempted">
+              <li *ngFor="let requirement of group.exempted">
+                <span>{{ requirement.name }}</span>
+                <button type="button" class="compact-action" (click)="changeRequirementStatus(requirement.id, 'pending')">
+                  Restaurar
+                </button>
+              </li>
+            </ul>
+            <ng-template #noExempted><p>Ninguna.</p></ng-template>
+          </div>
+        </div>
+      </details>
     </div>
   </section>
 
