@@ -2,7 +2,7 @@
 export const environment = {
   production: false,
   supabase: {
-    url: 'https://your-project.supabase.co',
-    anonKey: 'your-anon-or-publishable-key',
+    url: 'https://ylrjzsdcionglpuozeoj.supabase.co',
+    anonKey: 'sb_publishable_fF47YV09TlPictGEeSt1tQ_ENxOHnOC',
   },
 } as const;

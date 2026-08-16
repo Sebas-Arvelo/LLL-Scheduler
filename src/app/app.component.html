@@ -3,7 +3,6 @@
 <section class="auth-shell" *ngIf="!authLoading && !currentUser; else authenticatedApp">
   <article class="auth-card">
     <img class="brand-logo" src="assets/logo-llanada-full.png" alt="La Llanada Venezuela" />
-    <p class="eyebrow">La Llanada</p>
     <h1>{{ authMode === 'signIn' ? 'Iniciar sesión' : 'Crear cuenta' }}</h1>
     <p>Accede para generar y conservar tus programaciones.</p>
     <form (ngSubmit)="submitAuth()">
@@ -33,7 +32,6 @@
   <section class="hero">
     <div class="brand-card">
       <img class="brand-logo" src="assets/logo-llanada-full.png" alt="La Llanada Venezuela" />
-      <p class="eyebrow">La Llanada</p>
       <h1>Planificador de actividades del campamento</h1>
       <p class="subtitle">
         Configura grupos, actividades y bloques; el motor de dominio genera una rotación reproducible para toda la temporada.
@@ -44,7 +42,7 @@
       <article class="stat-card emphasis">
         <span>Temporada</span>
         <strong>{{ season.name }}</strong>
-        <small>{{ season.startDate }} — {{ season.endDate }}</small>
+        <small>{{ startDate }} — {{ endDate }}</small>
       </article>
       <article class="stat-card">
         <span>Grupos configurados</span>
@@ -78,23 +76,68 @@
       </div>
 
       <div class="season-summary">
-        <strong>{{ season.name }}</strong>
-        <span>Del {{ season.startDate }} al {{ season.endDate }}</span>
+        <label class="field season-name-field">
+          <span>Nombre de la temporada</span>
+          <input
+            type="text"
+            [ngModel]="season.name"
+            (ngModelChange)="setSeasonName($event)"
+            maxlength="120"
+            placeholder="Ej. Temporada 2026"
+          />
+        </label>
+        <span>Día a preparar: {{ planningDate }}</span>
       </div>
 
       <div class="form-grid">
         <label class="field">
-          <span>Fecha inicial</span>
-          <input type="date" [(ngModel)]="startDate" (ngModelChange)="markScheduleStale()" [min]="season.startDate" [max]="season.endDate" />
+          <span>Fecha del día</span>
+          <input type="date" [ngModel]="planningDate" (ngModelChange)="setPlanningDate($event)" />
         </label>
         <label class="field">
-          <span>Fecha final</span>
-          <input type="date" [(ngModel)]="endDate" (ngModelChange)="markScheduleStale()" [min]="season.startDate" [max]="season.endDate" />
+          <span>Tipo de jornada</span>
+          <select [ngModel]="dayMode" (ngModelChange)="setDayMode($event)">
+            <option value="regular">Día normal (M1–T2)</option>
+            <option value="morning">Solo mañana (M1–M3)</option>
+            <option value="special">Actividad de todo el día</option>
+            <option value="custom">Bloques personalizados</option>
+          </select>
         </label>
         <label class="field">
           <span>Semilla</span>
           <input type="number" [(ngModel)]="seed" (ngModelChange)="markScheduleStale()" />
         </label>
+      </div>
+
+      <label class="field" *ngIf="dayMode === 'special'">
+        <span>Actividad especial</span>
+        <input
+          type="text"
+          [ngModel]="specialDayActivityName"
+          (ngModelChange)="specialDayActivityName = $event; markScheduleStale()"
+          maxlength="120"
+          placeholder="Ej. Ecoaventura"
+        />
+      </label>
+
+      <label class="field" *ngIf="dayMode === 'morning'">
+        <span>Actividad de la tarde</span>
+        <input
+          type="text"
+          [ngModel]="afternoonActivityName"
+          (ngModelChange)="afternoonActivityName = $event; markScheduleStale()"
+          maxlength="120"
+          placeholder="Ej. Batalla de Araure"
+        />
+      </label>
+
+      <div class="note-box daily-continuity-note">
+        <p *ngIf="executionState.cycles.length > 0">
+          <strong>Continuidad activa:</strong> el nuevo día partirá de {{ executionState.cycles.length }} ciclos cargados y del historial real.
+        </p>
+        <p *ngIf="executionState.cycles.length === 0">
+          <strong>Primer día o sin historial:</strong> para continuar una temporada, abre el último día guardado y luego pulsa “Preparar día siguiente”.
+        </p>
       </div>
 
       <h3 class="subheading">Grupos por categoría</h3>
@@ -125,14 +168,14 @@
       <div class="panel-header">
         <div>
           <p class="panel-kicker">Jornada</p>
-          <h2>Bloques de la temporada</h2>
+          <h2>Bloques del día</h2>
         </div>
       </div>
 
       <div class="block-list">
         <article class="block-row" *ngFor="let block of timeBlocks; trackBy: trackById">
           <label class="switch-label block-toggle">
-            <input type="checkbox" [(ngModel)]="block.active" (ngModelChange)="markScheduleStale()" />
+            <input type="checkbox" [ngModel]="block.active" (ngModelChange)="setBlockActive(block, $event)" />
             <span>Activo</span>
           </label>
           <label class="compact-field block-name">
@@ -153,6 +196,12 @@
           </label>
         </article>
       </div>
+      <div class="note-box">
+        <p *ngIf="dayMode === 'regular'">Se usarán M1, M2, M3, T1 y T2.</p>
+        <p *ngIf="dayMode === 'morning'">Se usarán únicamente M1, M2 y M3.</p>
+        <p *ngIf="dayMode === 'special'">La actividad especial ocupará el día y no modificará el ciclo normal.</p>
+        <p *ngIf="dayMode === 'custom'">Activa exactamente los bloques que existan en esta fecha.</p>
+      </div>
     </article>
   </section>
 
@@ -162,10 +211,13 @@
         <p class="panel-kicker">Catálogo</p>
         <h2>Actividades y elegibilidad</h2>
       </div>
-      <label class="field search-field">
-        <span>Buscar</span>
-        <input type="search" [(ngModel)]="activitySearch" placeholder="Nombre o tipo" />
-      </label>
+      <div class="activity-header-actions">
+        <button type="button" class="primary-button" (click)="addActivity()">Agregar actividad</button>
+        <label class="field search-field">
+          <span>Buscar</span>
+          <input type="search" [(ngModel)]="activitySearch" placeholder="Nombre o tipo" />
+        </label>
+      </div>
     </div>
 
     <div class="activity-list">
@@ -174,6 +226,15 @@
           <label class="activity-toggle">
             <input type="checkbox" [(ngModel)]="activity.active" (ngModelChange)="markScheduleStale()" />
             <span>Activa</span>
+          </label>
+          <label class="activity-toggle">
+            <input
+              type="checkbox"
+              [checked]="isActivityAvailableToday(activity.id)"
+              (change)="setActivityAvailableToday(activity.id, $any($event.target).checked)"
+              [disabled]="dayMode === 'special'"
+            />
+            <span>Disponible hoy</span>
           </label>
           <label class="compact-field activity-name">
             <span>Nombre</span>
@@ -184,8 +245,12 @@
             <input type="text" [(ngModel)]="activity.displayCategory" (ngModelChange)="markScheduleStale()" />
           </label>
           <label class="compact-field capacity-field">
-            <span>Máx. grupos</span>
-            <input type="number" min="1" [(ngModel)]="activity.maxGroups" (ngModelChange)="markScheduleStale()" />
+            <span>Mín. cabañas</span>
+            <input type="number" min="1" [max]="activity.maxGroups" [ngModel]="activity.minGroups ?? 1" (ngModelChange)="setMinGroups(activity, $event)" />
+          </label>
+          <label class="compact-field capacity-field">
+            <span>Máx. cabañas</span>
+            <input type="number" [min]="activity.minGroups ?? 1" [(ngModel)]="activity.maxGroups" (ngModelChange)="markScheduleStale()" />
           </label>
           <label class="compact-field capacity-field">
             <span>Máx. participantes</span>
@@ -211,6 +276,14 @@
             />
             {{ category.name }}
           </label>
+          <button
+            type="button"
+            class="danger-button activity-delete-button"
+            (click)="removeActivity(activity)"
+            [attr.aria-label]="'Eliminar actividad ' + activity.name"
+          >
+            Eliminar actividad
+          </button>
         </div>
       </article>
     </div>
@@ -235,7 +308,8 @@
         >
           {{ saveState === 'saving' ? 'Guardando…' : 'Guardar programación' }}
         </button>
-        <button type="button" class="primary-button" (click)="generate()">Generar programación</button>
+        <button type="button" class="secondary-button" *ngIf="savedScheduleId" (click)="prepareNextDay()">Preparar día siguiente</button>
+        <button type="button" class="primary-button" (click)="generate()">Generar este día</button>
       </div>
     </div>
 
@@ -280,53 +354,71 @@
         <button type="button" [class.active]="viewMode === 'activities'" (click)="setViewMode('activities')">Por actividades</button>
       </div>
 
-      <div class="schedule-table-wrap" *ngIf="viewMode === 'groups'">
-        <table class="schedule-table">
-          <thead>
-            <tr>
-              <th class="sticky-column">Grupo</th>
-              <th *ngFor="let column of scheduleGrid.columns; trackBy: trackByKey">
-                <span>{{ column.label }}</span>
-                <small *ngIf="column.timeLabel">{{ column.timeLabel }}</small>
-              </th>
-            </tr>
-          </thead>
-          <tbody *ngFor="let category of generatedCategories; trackBy: trackById">
-            <tr class="category-row" *ngIf="rowsForCategory(category.id).length > 0">
-              <th [attr.colspan]="scheduleGrid.columns.length + 1">{{ category.name }}</th>
-            </tr>
-            <tr *ngFor="let row of rowsForCategory(category.id); trackBy: trackByGridRow">
-              <th class="sticky-column group-name">
-                {{ row.group.name }}
-                <small>{{ row.group.participantCount ?? 'Sin dato' }} participantes</small>
-              </th>
-              <td *ngFor="let cell of row.cells; trackBy: trackByKey" [class.unassigned-cell]="cell.unassignedReason">
-                <span *ngIf="cell.activityName; else missingAssignment">{{ cell.activityName }}</span>
-                <ng-container *ngIf="progressForCell(row.group.id, cell) as progress">
-                  <span class="status-badge" [attr.data-status]="progress.status">
-                    {{ progressStatusLabel(progress.status) }}
-                  </span>
-                  <select
-                    class="progress-select"
-                    aria-label="Estado de la asignación"
-                    [ngModel]="progress.status"
-                    (ngModelChange)="changeProgressStatus(progress, $event)"
-                    [disabled]="executionStateStatus === 'updating'"
+      <ng-container *ngIf="viewMode === 'groups'">
+        <div class="date-tabs" role="tablist" aria-label="Día de la programación">
+          <button
+            type="button"
+            role="tab"
+            *ngFor="let date of groupScheduleDates; let dayIndex = index"
+            [class.active]="selectedGroupDate === date"
+            [attr.aria-selected]="selectedGroupDate === date"
+            (click)="selectGroupDate(date)"
+          >
+            Día {{ dayIndex + 1 }} · {{ date }}
+          </button>
+        </div>
+
+        <div class="schedule-table-wrap">
+          <table class="schedule-table transposed-schedule-table">
+            <thead>
+              <tr>
+                <th class="sticky-column">Bloque</th>
+                <th class="cabin-heading" *ngFor="let row of scheduleGrid.rows; trackBy: trackByGridRow">
+                  <span>{{ row.group.name }}</span>
+                  <small>{{ row.group.participantCount ?? 'Sin dato' }} participantes</small>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let column of visibleGroupColumns; trackBy: trackByKey">
+                <th class="sticky-column slot-heading">
+                  <strong>{{ column.timeBlockName }}</strong>
+                  <small>{{ column.date }}</small>
+                  <small *ngIf="column.timeLabel">{{ column.timeLabel }}</small>
+                </th>
+                <ng-container *ngFor="let row of scheduleGrid.rows; trackBy: trackByGridRow">
+                  <td
+                    *ngIf="cellForGroupColumn(row, column) as cell"
+                    [class.unassigned-cell]="cell.unassignedReason"
                   >
-                    <option value="planned">Planificada</option>
-                    <option value="completed">Completada</option>
-                    <option value="cancelled">Cancelada</option>
-                  </select>
+                    <span *ngIf="cell.activityName; else missingAssignment">{{ cell.activityName }}</span>
+                    <ng-container *ngIf="progressForCell(row.group.id, cell) as progress">
+                      <span class="status-badge" [attr.data-status]="progress.status">
+                        {{ progressStatusLabel(progress.status) }}
+                      </span>
+                      <select
+                        class="progress-select"
+                        aria-label="Estado de la asignación"
+                        [ngModel]="progress.status"
+                        (ngModelChange)="changeProgressStatus(progress, $event)"
+                        [disabled]="executionStateStatus === 'updating'"
+                      >
+                        <option value="planned">Planificada</option>
+                        <option value="completed">Completada</option>
+                        <option value="cancelled">Cancelada</option>
+                      </select>
+                    </ng-container>
+                    <ng-template #missingAssignment>
+                      <span [title]="cell.unassignedReason ?? ''">{{ cell.unassignedReason ? 'Sin asignación' : '—' }}</span>
+                      <small *ngIf="cell.unassignedReason">{{ cell.unassignedReason }}</small>
+                    </ng-template>
+                  </td>
                 </ng-container>
-                <ng-template #missingAssignment>
-                  <span [title]="cell.unassignedReason ?? ''">{{ cell.unassignedReason ? 'Sin asignación' : '—' }}</span>
-                  <small *ngIf="cell.unassignedReason">{{ cell.unassignedReason }}</small>
-                </ng-template>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </ng-container>
 
       <section class="activity-view" *ngIf="viewMode === 'activities'" aria-labelledby="activity-view-title">
         <div class="slot-navigation">

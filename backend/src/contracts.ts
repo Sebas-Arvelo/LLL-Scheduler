@@ -21,8 +21,10 @@ export interface ConfigurationSnapshot {
     id: string;
     name: string;
     active: boolean;
+    minGroups?: number;
     maxGroups: number;
     maxParticipants?: number;
+    countsTowardCycle?: boolean;
     displayCategory?: string;
     description?: string;
   }[];

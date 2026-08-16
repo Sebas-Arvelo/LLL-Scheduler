@@ -2,7 +2,7 @@ import { readEnvironment } from '../config/environment';
 import { createDatabasePool, type DatabasePool, withTransaction } from './database';
 
 export const DEMO_SEASON_ID = 'season-demo-2026';
-export const DEMO_COUNTS = { seasons: 1, categories: 4, groups: 36, activities: 18, eligibility: 72, blocks: 4 } as const;
+export const DEMO_COUNTS = { seasons: 1, categories: 4, groups: 36, activities: 18, eligibility: 72, blocks: 5 } as const;
 
 const categories = [
   ['sabana', 'Cabañas de Sabana', 12],
@@ -12,31 +12,32 @@ const categories = [
 ] as const;
 
 const activities = [
-  ['futbol-5', 'Deporte: Fútbol 5', 'Deporte', 36],
-  ['futbol-campo', 'Deporte: Fútbol Campo', 'Deporte', 36],
-  ['kickingball', 'Deporte: Kickingball', 'Deporte', 36],
-  ['ultimate', 'Deporte: Ultimate', 'Deporte', 36],
-  ['voleybol', 'Deporte: Voleybol', 'Deporte', 36],
-  ['arcillita', 'Excursión: Arcillita', 'Excursión', 36],
-  ['cascaditas', 'Excursión: Cascaditas', 'Excursión', 36],
-  ['periodico', 'Manualidades: Periódico', 'Manualidades', 36],
-  ['proyecto', 'Manualidades: Proyecto', 'Manualidades', 36],
-  ['pulseritas', 'Manualidades: Pulseritas', 'Manualidades', 36],
-  ['tablita', 'Manualidades: Tablita', 'Manualidades', 36],
+  ['futbol-5', 'Fútbol 5', 'Deporte', 36],
+  ['futbol-campo', 'Fútbol Campo', 'Deporte', 36],
+  ['kickingball', 'Kickingball', 'Deporte', 36],
+  ['ultimate', 'Ultimate', 'Deporte', 36],
+  ['voleybol', 'Voleybol', 'Deporte', 36],
+  ['arcillita', 'Arcillita', 'Excursión', 36],
+  ['cascaditas', 'Cascaditas', 'Excursión', 36],
+  ['periodico', 'Periódico', 'Manualidades', 36],
+  ['proyecto', 'Proyecto', 'Manualidades', 36],
+  ['pulseritas', 'Pulseritas', 'Manualidades', 36],
+  ['tablita', 'Tablita', 'Manualidades', 36],
   ['mundialito', 'Mundialito Eliminatorias', 'Competencia', 36],
-  ['hidroslide', 'Piscina: Hidroslide', 'Piscina', 36],
-  ['piscina', 'Piscina: Piscina', 'Piscina', 36],
-  ['botes', 'Salida: Botes', 'Salida', 36],
-  ['caballos', 'Salida: Caballos', 'Salida', 3],
-  ['ordeno', 'Salida: Ordeño', 'Salida', 36],
-  ['paseo-bici', 'Salida: Paseo en Bici', 'Salida', 36],
+  ['hidroslide', 'Hidroslide', 'Piscina', 36],
+  ['piscina', 'Piscina', 'Piscina', 36],
+  ['botes', 'Botes', 'Salida', 36],
+  ['caballos', 'Caballos', 'Salida', 3],
+  ['ordeno', 'Ordeño', 'Salida', 36],
+  ['paseo-bici', 'Paseo en Bici', 'Salida', 36],
 ] as const;
 
 const blocks = [
-  ['block-1', 'Bloque 1', 1, '09:00', '10:15'],
-  ['block-2', 'Bloque 2', 2, '10:30', '11:45'],
-  ['block-3', 'Bloque 3', 3, '14:00', '15:15'],
-  ['block-4', 'Bloque 4', 4, '15:30', '16:45'],
+  ['block-1', 'M1', 1, '10:00', '10:50'],
+  ['block-2', 'M2', 2, '10:50', '11:40'],
+  ['block-m3', 'M3', 3, '11:40', '12:30'],
+  ['block-3', 'T1', 4, '14:30', '15:20'],
+  ['block-4', 'T2', 5, '15:20', '16:10'],
 ] as const;
 
 export async function seedDemo(pool: DatabasePool): Promise<void> {
@@ -47,7 +48,7 @@ export async function seedDemo(pool: DatabasePool): Promise<void> {
          ON CONFLICT (id) DO UPDATE SET
            name = EXCLUDED.name, start_date = EXCLUDED.start_date,
            end_date = EXCLUDED.end_date, active = EXCLUDED.active, updated_at = now()`,
-      [DEMO_SEASON_ID, 'Temporada demo 2026', '2026-08-01', '2026-08-21'],
+      [DEMO_SEASON_ID, 'Temporada 2026', '2026-08-01', '2026-08-21'],
     );
 
     for (const [categoryId, name, groupCount] of categories) {
@@ -59,7 +60,7 @@ export async function seedDemo(pool: DatabasePool): Promise<void> {
       for (let index = 1; index <= groupCount; index += 1) {
         await client.query(
           `INSERT INTO camp_groups (id, season_id, category_id, name, participant_count, active)
-           VALUES ($1, $2, $3, $4, 10, true)
+           VALUES ($1, $2, $3, $4, 8, true)
            ON CONFLICT (id) DO UPDATE SET
              season_id = EXCLUDED.season_id, category_id = EXCLUDED.category_id,
              name = EXCLUDED.name, participant_count = EXCLUDED.participant_count,

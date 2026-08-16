@@ -75,6 +75,24 @@ test('POST /api/schedules creates a schedule with assignments and unassigned', a
   assert.deepEqual(body.unassigned.map((entry) => entry.reasonCode), ['CAPACITY_EXHAUSTED']);
 });
 
+test('POST /api/schedules preserves an activity that does not advance cycles', async () => {
+  const payload = validRequest();
+  const response = await postSchedule({
+    ...payload,
+    configurationSnapshot: {
+      ...payload.configurationSnapshot,
+      activities: payload.configurationSnapshot.activities.map((activity) => ({
+        ...activity,
+        countsTowardCycle: false,
+      })),
+    },
+  });
+
+  assert.equal(response.status, 201);
+  const body = await response.json() as { schedule: { configurationSnapshot: { activities: { countsTowardCycle?: boolean }[] } } };
+  assert.equal(body.schedule.configurationSnapshot.activities[0].countsTowardCycle, false);
+});
+
 test('POST /api/schedules rejects a duplicate group assignment for a slot', async () => {
   const payload = validRequest();
   const response = await postSchedule({ ...payload, assignments: [...payload.assignments, payload.assignments[0]] });
@@ -102,6 +120,54 @@ test('POST /api/schedules rejects assignments that exceed snapshot capacity', as
     ],
     unassigned: [],
   });
+  assert.equal(response.status, 409);
+  assert.equal(schedules.schedules.size, 0);
+});
+
+test('POST /api/schedules rejects a used activity below its minimum group count', async () => {
+  const payload = validRequest();
+  const response = await postSchedule({
+    ...payload,
+    configurationSnapshot: {
+      ...payload.configurationSnapshot,
+      activities: payload.configurationSnapshot.activities.map((activity) => ({
+        ...activity,
+        minGroups: 2,
+        maxGroups: 2,
+      })),
+    },
+  });
+
+  assert.equal(response.status, 409);
+  assert.equal(schedules.schedules.size, 0);
+});
+
+test('POST /api/schedules rejects different programs in one activity and slot', async () => {
+  const payload = validRequest();
+  const response = await postSchedule({
+    ...payload,
+    configurationSnapshot: {
+      ...payload.configurationSnapshot,
+      categories: [
+        ...payload.configurationSnapshot.categories,
+        { id: 'bosque', name: 'Bosque', active: true },
+      ],
+      groups: payload.configurationSnapshot.groups.map((group, index) =>
+        index === 1 ? { ...group, categoryId: 'bosque' } : group,
+      ),
+      activities: payload.configurationSnapshot.activities.map((activity) => ({ ...activity, maxGroups: 2 })),
+      eligibility: [
+        ...payload.configurationSnapshot.eligibility,
+        { activityId: 'kayak', groupCategoryId: 'bosque' },
+      ],
+    },
+    assignments: [
+      ...payload.assignments,
+      { ...payload.assignments[0], groupId: 'sabana-2' },
+    ],
+    unassigned: [],
+  });
+
   assert.equal(response.status, 409);
   assert.equal(schedules.schedules.size, 0);
 });

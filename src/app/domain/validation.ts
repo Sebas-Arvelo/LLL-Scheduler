@@ -7,6 +7,7 @@ import type { TimeBlock } from './time-blocks';
 
 export type DomainValidationCode =
   | 'REQUIRED_VALUE'
+  | 'INVALID_MIN_GROUPS'
   | 'INVALID_MAX_GROUPS'
   | 'INVALID_MAX_PARTICIPANTS'
   | 'INVALID_PARTICIPANT_COUNT'
@@ -71,6 +72,15 @@ export function validateCampGroup(group: CampGroup): DomainValidationIssue[] {
 
 export function validateActivity(activity: Activity): DomainValidationIssue[] {
   const issues = [...requiredString(activity.id, 'id'), ...requiredString(activity.name, 'name')];
+  const minGroups = activity.minGroups ?? 1;
+
+  if (!Number.isInteger(minGroups) || minGroups < 1 || minGroups > activity.maxGroups) {
+    issues.push({
+      code: 'INVALID_MIN_GROUPS',
+      path: 'minGroups',
+      message: 'minGroups must be an integer between 1 and maxGroups.',
+    });
+  }
 
   if (!Number.isInteger(activity.maxGroups) || activity.maxGroups < 1) {
     issues.push({

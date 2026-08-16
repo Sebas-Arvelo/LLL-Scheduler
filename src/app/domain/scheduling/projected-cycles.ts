@@ -79,7 +79,12 @@ function createCycle(
   if (state.currentCycleId !== undefined) return state;
 
   const requiredActivityIds = activities
-    .filter((activity) => activity.active && eligibility.has(`${activity.id}\u0000${group.categoryId}`))
+    .filter(
+      (activity) =>
+        activity.active &&
+        (activity.countsTowardCycle ?? true) &&
+        eligibility.has(`${activity.id}\u0000${group.categoryId}`),
+    )
     .map((activity) => activity.id)
     .sort();
   if (requiredActivityIds.length === 0) return state;
@@ -149,6 +154,17 @@ export function applyAssignmentsToProjectedCycles(
 
     const current = state.cycles[currentIndex];
     const pendingBefore = current.snapshot.requirements.filter((requirement) => requirement.status === 'pending');
+    const belongsToCycle = current.snapshot.requirements.some(
+      (requirement) => requirement.activityId === assignment.activityId,
+    );
+    if (!belongsToCycle) {
+      effects.push({
+        groupId: assignment.groupId,
+        activityId: assignment.activityId,
+        prematureRepetition: false,
+      });
+      return state;
+    }
     const matchedPending = pendingBefore.some((requirement) => requirement.activityId === assignment.activityId);
     const requirements = current.snapshot.requirements.map<CycleRequirement>((requirement) =>
       requirement.activityId === assignment.activityId && requirement.status === 'pending'

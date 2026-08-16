@@ -1,6 +1,7 @@
 import { AppComponent } from '../../app.component';
 import { buildSavedScheduleData, restoreSavedSchedule } from './saved-schedule';
-import { sortSavedSchedules, type SavedScheduleSummary } from './saved-schedule.service';
+import { supabaseClientService } from './supabase-client.service';
+import { SavedScheduleService, sortSavedSchedules, type SavedScheduleSummary } from './saved-schedule.service';
 
 describe('Supabase saved schedule mapping', () => {
   it('stores the generated plan needed by both views without projected cycles', () => {
@@ -18,9 +19,9 @@ describe('Supabase saved schedule mapping', () => {
     });
 
     expect(data.schemaVersion).toBe(1);
-    expect(data.result.assignments.length).toBe(288);
-    expect(data.result.metrics.global.successfulAssignments).toBe(288);
-    expect(data.result.blocks.length).toBe(8);
+    expect(data.result.assignments.length).toBe(180);
+    expect(data.result.metrics.global.successfulAssignments).toBe(180);
+    expect(data.result.blocks.length).toBe(5);
     expect(data.result).not.toEqual(jasmine.objectContaining({ projectedCycles: jasmine.anything() }));
   });
 
@@ -55,5 +56,23 @@ describe('Supabase saved schedule mapping', () => {
 
     expect(sortSavedSchedules(source).map((schedule) => schedule.id)).toEqual(['new', 'old']);
     expect(source.map((schedule) => schedule.id)).toEqual(['old', 'new']);
+  });
+
+  it('deletes a saved schedule without blocking it because execution progress exists', async () => {
+    const maybeSingle = jasmine.createSpy('maybeSingle').and.resolveTo({ data: { id: 'saved-1' }, error: null });
+    const select = jasmine.createSpy('select').and.returnValue({ maybeSingle });
+    const secondEq = jasmine.createSpy('secondEq').and.returnValue({ select });
+    const firstEq = jasmine.createSpy('firstEq').and.returnValue({ eq: secondEq });
+    const remove = jasmine.createSpy('delete').and.returnValue({ eq: firstEq });
+    const from = jasmine.createSpy('from').and.callFake((table: string) => {
+      if (table !== 'saved_schedules') throw new Error(`Unexpected table: ${table}`);
+      return { delete: remove };
+    });
+    spyOn(supabaseClientService, 'getClient').and.resolveTo({ from } as never);
+
+    await new SavedScheduleService().delete('saved-1', 'user-1');
+
+    expect(from).toHaveBeenCalledOnceWith('saved_schedules');
+    expect(remove).toHaveBeenCalled();
   });
 });

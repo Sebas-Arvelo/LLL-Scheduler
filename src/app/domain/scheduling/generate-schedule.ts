@@ -57,6 +57,13 @@ function validateGenerationInput(input: ScheduleGenerationInput): readonly Sched
   const duplicateBlockOrders = input.timeBlocks
     .map((block) => block.order)
     .filter((order, index, all) => all.indexOf(order) !== index);
+  const requestedDates = new Set(input.dates);
+  const lockedDailyActivityKeys = input.lockedAssignments
+    .filter((assignment) => requestedDates.has(assignment.date))
+    .map((assignment) => `${assignment.date}\u0000${assignment.groupId}\u0000${assignment.activityId}`);
+  const duplicateLockedDailyActivities = lockedDailyActivityKeys.filter(
+    (key, index, all) => all.indexOf(key) !== index,
+  );
   if (
     seasonIssues.length > 0 ||
     timeBlockIssues.length > 0 ||
@@ -64,6 +71,7 @@ function validateGenerationInput(input: ScheduleGenerationInput): readonly Sched
     wrongSeasonBlocks.length > 0 ||
     duplicateBlockIds.length > 0 ||
     duplicateBlockOrders.length > 0 ||
+    duplicateLockedDailyActivities.length > 0 ||
     new Set(input.dates).size !== input.dates.length
   ) {
     issues.push({
@@ -77,6 +85,7 @@ function validateGenerationInput(input: ScheduleGenerationInput): readonly Sched
         duplicateBlockIds: [...new Set(duplicateBlockIds)],
         duplicateBlockOrders: [...new Set(duplicateBlockOrders)],
         duplicateDates: input.dates.filter((date, index, all) => all.indexOf(date) !== index),
+        duplicateLockedDailyActivities: [...new Set(duplicateLockedDailyActivities)],
       },
     });
   }
@@ -162,6 +171,7 @@ export function generateSchedule(input: ScheduleGenerationInput): ScheduleGenera
       cycleSnapshots: activeCycleSnapshots(projectedCycles),
       history: input.history,
       projectedAssignments: assignments,
+      sameDayAssignments: [...assignments, ...input.lockedAssignments],
       lockedAssignments,
       hardConstraints: input.hardConstraints,
       preferences: input.preferences,

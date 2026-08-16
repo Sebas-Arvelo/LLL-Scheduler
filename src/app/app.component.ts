@@ -5,7 +5,9 @@ import { FormsModule } from '@angular/forms';
 import { DEMO_ACTIVITIES } from './activity-catalog';
 import {
   type Activity,
+  type ActivityCycleSnapshot,
   type ActivityEligibility,
+  type Assignment,
   type CampGroup,
   type GroupCategory,
   type LocalDate,
@@ -30,6 +32,7 @@ import {
   enumerateLocalDates,
   type ActivitySlotView,
   type GroupCategoryConfiguration,
+  type ScheduleGridColumn,
   type ScheduleGridRow,
   type ScheduleGridCell,
   type ScheduleGridView,
@@ -74,6 +77,8 @@ interface RealCycleView {
   exempted: readonly { id: string; name: string }[];
 }
 
+type DayMode = 'regular' | 'morning' | 'custom' | 'special';
+
 const DIAGNOSTIC_MESSAGES: Readonly<Record<SchedulingDiagnosticCode, string>> = {
   INACTIVE_GROUP_SKIPPED: 'Se omitió un grupo inactivo.',
   INVALID_SCHEDULING_INPUT: 'La configuración general contiene fechas, bloques o referencias inválidas.',
@@ -83,6 +88,135 @@ const DIAGNOSTIC_MESSAGES: Readonly<Record<SchedulingDiagnosticCode, string>> = 
   DUPLICATE_AVAILABILITY: 'Hay reglas de disponibilidad duplicadas.',
   PARTICIPANT_COUNT_REQUIRED: 'Falta participantCount para aplicar una capacidad máxima de participantes.',
 };
+
+function addLocalDays(value: string, days: number): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return '';
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  if (date.toISOString().slice(0, 10) !== value) return '';
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function currentLocalDate(now = new Date()): string {
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function mergeById<T extends { id: string }>(previous: readonly T[], next: readonly T[]): T[] {
+  const merged = new Map(previous.map((item) => [item.id, { ...item }]));
+  for (const item of next) merged.set(item.id, { ...item });
+  return [...merged.values()];
+}
+
+function mergeEligibility(
+  previous: readonly ActivityEligibility[],
+  next: readonly ActivityEligibility[],
+): ActivityEligibility[] {
+  return [...new Map([...previous, ...next].map((entry) => [
+    `${entry.activityId}\u0000${entry.groupCategoryId}`,
+    { ...entry },
+  ])).values()];
+}
+
+function standardDeviation(values: readonly number[]): number {
+  if (values.length === 0) return 0;
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  return Math.sqrt(values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length);
+}
+
+function mergeScheduleResults(
+  previous: ScheduleGenerationResult | undefined,
+  daily: ScheduleGenerationResult,
+  date: string,
+): ScheduleGenerationResult {
+  if (!previous) return daily;
+  const priorAssignments = previous.assignments.filter((assignment) => assignment.date !== date);
+  const assignments = [...priorAssignments, ...daily.assignments].sort((left, right) =>
+    left.date.localeCompare(right.date) ||
+    left.timeBlockId.localeCompare(right.timeBlockId) ||
+    left.groupId.localeCompare(right.groupId),
+  );
+  const blocks = [
+    ...previous.blocks.filter((block) => block.slot.date !== date),
+    ...daily.blocks,
+  ].sort((left, right) =>
+    left.slot.date.localeCompare(right.slot.date) ||
+    left.slot.timeBlockOrder - right.slot.timeBlockOrder ||
+    left.slot.timeBlockId.localeCompare(right.slot.timeBlockId),
+  );
+  const unassigned = [
+    ...previous.unassigned.filter((block) => block.slot.date !== date),
+    ...daily.unassigned,
+  ].sort((left, right) =>
+    left.slot.date.localeCompare(right.slot.date) || left.slot.timeBlockOrder - right.slot.timeBlockOrder,
+  );
+  const groupIds = [...new Set([
+    ...previous.metrics.byGroup.map((group) => group.groupId),
+    ...daily.metrics.byGroup.map((group) => group.groupId),
+  ])].sort();
+  const byGroup = groupIds.map((groupId) => {
+    const groupAssignments = assignments.filter((assignment) => assignment.groupId === groupId);
+    const activityUsage: Record<string, number> = {};
+    for (const assignment of groupAssignments) {
+      activityUsage[assignment.activityId] = (activityUsage[assignment.activityId] ?? 0) + 1;
+    }
+    const previousMetrics = previous.metrics.byGroup.find((group) => group.groupId === groupId);
+    const dailyMetrics = daily.metrics.byGroup.find((group) => group.groupId === groupId);
+    return {
+      groupId,
+      totalAssignments: groupAssignments.length,
+      distinctActivityCount: Object.keys(activityUsage).length,
+      prematureRepetitionCount:
+        (previousMetrics?.prematureRepetitionCount ?? 0) + (dailyMetrics?.prematureRepetitionCount ?? 0),
+      completedCycleCount: (previousMetrics?.completedCycleCount ?? 0) + (dailyMetrics?.completedCycleCount ?? 0),
+      activityUsage,
+    };
+  });
+  const activityUsage: Record<string, number> = {};
+  for (const assignment of assignments) {
+    activityUsage[assignment.activityId] = (activityUsage[assignment.activityId] ?? 0) + 1;
+  }
+  const unassignedCells = unassigned.reduce((sum, block) => sum + block.groups.length, 0);
+  const requestedGroupBlocks = assignments.length + unassignedCells;
+  const prematureRepetitionCount = byGroup.reduce((sum, group) => sum + group.prematureRepetitionCount, 0);
+  return {
+    status: daily.status === 'invalid_input'
+      ? 'invalid_input'
+      : unassignedCells > 0
+        ? 'partial'
+        : 'success',
+    assignments,
+    unassigned,
+    projectedCycles: daily.projectedCycles,
+    blocks,
+    metrics: {
+      byGroup,
+      global: {
+        requestedGroupBlocks,
+        successfulAssignments: assignments.length,
+        unassignedCells,
+        coveragePercentage: requestedGroupBlocks === 0 ? 100 : assignments.length / requestedGroupBlocks * 100,
+        prematureRepetitionCount,
+        activityUsage,
+        activityUsageStandardDeviation: standardDeviation(Object.values(activityUsage)),
+      },
+    },
+    diagnostics: {
+      ...daily.diagnostics,
+      blockCount: blocks.length,
+      generatedBlockCount: blocks.length,
+      branchAndBoundNodes:
+        previous.diagnostics.branchAndBoundNodes + daily.diagnostics.branchAndBoundNodes,
+      branchAndBoundBranches:
+        previous.diagnostics.branchAndBoundBranches + daily.diagnostics.branchAndBoundBranches,
+      warnings: [...previous.diagnostics.warnings, ...daily.diagnostics.warnings],
+      errors: [...previous.diagnostics.errors, ...daily.diagnostics.errors],
+    },
+  };
+}
 
 @Component({
   selector: 'app-root',
@@ -112,15 +246,19 @@ export class AppComponent implements OnInit, OnDestroy {
   groupConfigurations: GroupCategoryConfiguration[] = DEMO_GROUP_CATEGORIES.map((category) => ({
     categoryId: category.id,
     count: category.id === 'sabana' || category.id === 'bosque' ? 12 : 6,
-    participantCount: 10,
+    participantCount: 8,
     active: true,
   }));
   activities: Activity[] = DEMO_ACTIVITIES.map((activity) => ({ ...activity }));
   activityEligibility: ActivityEligibility[] = DEMO_ACTIVITY_ELIGIBILITY.map((entry) => ({ ...entry }));
   timeBlocks: TimeBlock[] = DEMO_TIME_BLOCKS.map((block) => ({ ...block }));
 
-  startDate = '2026-08-10';
-  endDate = '2026-08-11';
+  startDate = currentLocalDate();
+  endDate = this.startDate;
+  dayMode: DayMode = 'regular';
+  specialDayActivityName = 'Ecoaventura';
+  afternoonActivityName = 'Batalla de Araure';
+  dailyUnavailableActivityIds: string[] = [];
   seed = 2026;
   activitySearch = '';
   showProjectedCycles = false;
@@ -128,6 +266,7 @@ export class AppComponent implements OnInit, OnDestroy {
   scheduleStale = false;
   selectedActivityDate = '';
   selectedActivityBlockId = '';
+  selectedGroupDate = '';
   generationResult?: ScheduleGenerationResult;
   scheduleGrid: ScheduleGridView = { columns: [], rows: [] };
   activitySlotView?: ActivitySlotView;
@@ -145,6 +284,11 @@ export class AppComponent implements OnInit, OnDestroy {
   executionMessage = '';
   updatingProgressId?: string;
   uiErrors: string[] = [];
+  private customActivitySequence = 0;
+
+  constructor() {
+    this.syncSeasonDates();
+  }
 
   ngOnInit(): void {
     void this.initializeSession();
@@ -186,6 +330,14 @@ export class AppComponent implements OnInit, OnDestroy {
 
   get requestedDays(): number {
     return enumerateLocalDates(this.startDate, this.endDate).length;
+  }
+
+  get planningDate(): string {
+    return this.startDate;
+  }
+
+  get maximumEndDate(): string {
+    return addLocalDays(this.startDate, 20);
   }
 
   get completedProjectedCycles(): number {
@@ -265,6 +417,15 @@ export class AppComponent implements OnInit, OnDestroy {
     return [...new Set(this.generationResult?.blocks.map((block) => block.slot.date) ?? [])].sort();
   }
 
+  get groupScheduleDates(): readonly LocalDate[] {
+    return [...new Set(this.scheduleGrid.columns.map((column) => column.date))];
+  }
+
+  get visibleGroupColumns(): readonly ScheduleGridColumn[] {
+    const selectedDate = this.selectedGroupDate || this.groupScheduleDates[0];
+    return this.scheduleGrid.columns.filter((column) => column.date === selectedDate);
+  }
+
   get availableActivityBlocks(): readonly TimeBlock[] {
     const blockIds = new Set(
       this.generationResult?.blocks
@@ -284,6 +445,11 @@ export class AppComponent implements OnInit, OnDestroy {
     return this.scheduleGrid.rows.filter((row) => row.group.categoryId === categoryId);
   }
 
+  cellForGroupColumn(row: ScheduleGridRow, column: ScheduleGridColumn): ScheduleGridCell | undefined {
+    const columnIndex = this.scheduleGrid.columns.findIndex((candidate) => candidate.key === column.key);
+    return columnIndex >= 0 ? row.cells[columnIndex] : undefined;
+  }
+
   isEligible(activityId: string, categoryId: string): boolean {
     return this.activityEligibility.some(
       (entry) => entry.activityId === activityId && entry.groupCategoryId === categoryId,
@@ -301,10 +467,109 @@ export class AppComponent implements OnInit, OnDestroy {
     this.markScheduleStale();
   }
 
+  setSeasonName(name: string): void {
+    this.season.name = name;
+    this.markScheduleStale();
+  }
+
+  setStartDate(date: string): void {
+    this.setPlanningDate(date);
+  }
+
+  setPlanningDate(date: string): void {
+    this.startDate = date;
+    this.endDate = date;
+    this.syncSeasonDates();
+    this.markScheduleStale();
+  }
+
+  setEndDate(date: string): void {
+    this.endDate = date;
+    this.syncSeasonDates();
+    this.markScheduleStale();
+  }
+
+  setDayMode(mode: DayMode): void {
+    this.dayMode = mode;
+    this.timeBlocks = this.timeBlocks.filter((block) => !block.id.startsWith('special-all-day-'));
+    if (mode === 'regular') {
+      for (const block of this.timeBlocks) block.active = true;
+    } else if (mode === 'morning') {
+      for (const block of this.timeBlocks) block.active = /^M\d+$/i.test(block.name.trim());
+    } else if (mode === 'special') {
+      for (const block of this.timeBlocks) block.active = false;
+    }
+    this.markScheduleStale();
+  }
+
+  setBlockActive(block: TimeBlock, active: boolean): void {
+    block.active = active;
+    this.dayMode = 'custom';
+    this.markScheduleStale();
+  }
+
+  isActivityAvailableToday(activityId: string): boolean {
+    return !this.dailyUnavailableActivityIds.includes(activityId);
+  }
+
+  setActivityAvailableToday(activityId: string, available: boolean): void {
+    this.dailyUnavailableActivityIds = available
+      ? this.dailyUnavailableActivityIds.filter((id) => id !== activityId)
+      : [...new Set([...this.dailyUnavailableActivityIds, activityId])];
+    this.markScheduleStale();
+  }
+
+  prepareNextDay(): void {
+    const nextDate = addLocalDays(this.planningDate, 1);
+    if (!nextDate) return;
+    this.setPlanningDate(nextDate);
+    this.dayMode = 'regular';
+    this.timeBlocks = this.timeBlocks.filter((block) => !block.id.startsWith('special-all-day-'));
+    for (const block of this.timeBlocks) block.active = true;
+    this.dailyUnavailableActivityIds = [];
+    this.activitySlotView = undefined;
+    this.scheduleStale = true;
+  }
+
+  addActivity(): void {
+    const activity: Activity = {
+      id: this.nextCustomActivityId(),
+      name: 'Nueva actividad',
+      displayCategory: 'Sin tipo',
+      minGroups: 1,
+      maxGroups: Math.max(this.totalGroups, 1),
+      active: true,
+    };
+
+    this.activities = [...this.activities, activity];
+    this.activityEligibility = [
+      ...this.activityEligibility,
+      ...this.groupCategories.map((category) => ({
+        activityId: activity.id,
+        groupCategoryId: category.id,
+      })),
+    ];
+    this.activitySearch = '';
+    this.markScheduleStale();
+  }
+
+  removeActivity(activity: Activity): void {
+    if (!window.confirm(`¿Eliminar “${activity.name}” del catálogo de actividades?`)) return;
+
+    this.activities = this.activities.filter((candidate) => candidate.id !== activity.id);
+    this.activityEligibility = this.activityEligibility.filter((entry) => entry.activityId !== activity.id);
+    this.markScheduleStale();
+  }
+
   setMaxParticipants(activity: Activity, value: number | null): void {
     const normalized = Number(value);
     if (Number.isInteger(normalized) && normalized > 0) activity.maxParticipants = normalized;
     else delete activity.maxParticipants;
+    this.markScheduleStale();
+  }
+
+  setMinGroups(activity: Activity, value: number): void {
+    activity.minGroups = Number(value);
     this.markScheduleStale();
   }
 
@@ -314,9 +579,17 @@ export class AppComponent implements OnInit, OnDestroy {
       if (this.saveState !== 'saving') {
         this.saveState = 'idle';
         this.saveMessage = '';
-        this.savedScheduleId = undefined;
       }
     }
+  }
+
+  private nextCustomActivityId(): string {
+    let id: string;
+    do {
+      this.customActivitySequence += 1;
+      id = `actividad-personalizada-${Date.now()}-${this.customActivitySequence}`;
+    } while (this.activities.some((activity) => activity.id === id));
+    return id;
   }
 
   setViewMode(mode: 'groups' | 'activities'): void {
@@ -329,40 +602,67 @@ export class AppComponent implements OnInit, OnDestroy {
     this.refreshActivitySlotView();
   }
 
+  selectGroupDate(date: LocalDate): void {
+    this.selectedGroupDate = date;
+  }
+
   selectActivityBlock(timeBlockId: string): void {
     this.selectedActivityBlockId = timeBlockId;
     this.refreshActivitySlotView();
   }
 
   generate(): void {
+    const previousResult = this.generationResult;
+    const previousActivities = this.generatedActivities;
+    const previousEligibility = this.generatedEligibility;
+    const previousTimeBlocks = this.generatedTimeBlocks;
+    this.syncSeasonDates();
     this.uiErrors = this.validateUiConfiguration();
     if (this.uiErrors.length > 0) {
-      this.generationResult = undefined;
-      this.scheduleGrid = { columns: [], rows: [] };
-      this.activitySlotView = undefined;
-      this.scheduleStale = false;
+      if (!previousResult) {
+        this.scheduleGrid = { columns: [], rows: [] };
+        this.activitySlotView = undefined;
+      }
       return;
     }
 
     const groups = this.groups;
+    const dailyConfiguration = this.buildDailyGenerationConfiguration(groups);
     const input = buildScheduleGenerationInput({
       season: this.season,
-      startDate: this.startDate,
-      endDate: this.endDate,
-      timeBlocks: this.timeBlocks,
+      startDate: this.planningDate,
+      endDate: this.planningDate,
+      timeBlocks: dailyConfiguration.timeBlocks,
       groups,
-      activities: this.activities,
+      activities: dailyConfiguration.activities,
       groupCategories: this.groupCategories,
-      activityEligibility: this.activityEligibility,
+      activityEligibility: dailyConfiguration.eligibility,
+      initialCycleSnapshots: previousResult?.projectedCycles.length
+        ? previousResult.projectedCycles.flatMap((state) => state.cycles.map((cycle) => cycle.snapshot))
+        : this.realCycleSnapshots(),
+      history: [
+        ...this.realCompletedHistory(),
+        ...(previousResult?.assignments.map((assignment) => ({ ...assignment, status: 'completed' as const })) ?? []),
+      ],
+      hardConstraints: dailyConfiguration.hardConstraints,
       seed: this.seed,
     });
-    this.generationResult = generateSchedule(input);
+    const dailyResult = generateSchedule(input);
+    this.generationResult = mergeScheduleResults(previousResult, dailyResult, this.planningDate);
     this.generatedGroups = groups.map((group) => ({ ...group }));
-    this.generatedSeason = { ...this.season };
-    this.generatedActivities = this.activities.map((activity) => ({ ...activity }));
+    const generatedDates = [...new Set(this.generationResult.blocks.map((block) => block.slot.date))].sort();
+    this.generatedSeason = {
+      ...this.season,
+      startDate: generatedDates[0] ?? this.planningDate,
+      endDate: generatedDates.at(-1) ?? this.planningDate,
+    };
+    this.generatedActivities = mergeById(previousActivities, dailyConfiguration.activities);
     this.generatedCategories = this.groupCategories.map((category) => ({ ...category }));
-    this.generatedEligibility = this.activityEligibility.map((entry) => ({ ...entry }));
-    this.generatedTimeBlocks = this.timeBlocks.map((block) => ({ ...block }));
+    this.generatedEligibility = mergeEligibility(previousEligibility, dailyConfiguration.eligibility);
+    this.generatedTimeBlocks = mergeById(previousTimeBlocks, [
+      ...this.timeBlocks,
+      ...dailyConfiguration.timeBlocks.filter((block) => block.id.startsWith('special-')),
+    ]);
     this.scheduleGrid = buildScheduleGrid(
       this.generationResult,
       this.generatedGroups,
@@ -370,15 +670,12 @@ export class AppComponent implements OnInit, OnDestroy {
       this.generatedActivities,
       this.generatedTimeBlocks,
     );
+    this.selectedGroupDate = this.planningDate;
     this.scheduleStale = false;
     this.saveState = 'idle';
     this.saveMessage = '';
-    this.savedScheduleId = undefined;
-    this.executionState = { progress: [], cycles: [] };
-    this.executionStateStatus = 'idle';
-    this.executionMessage = '';
     if (!this.scheduleName.trim()) {
-      this.scheduleName = `${this.season.name} · ${this.startDate}–${this.endDate}`;
+      this.scheduleName = `${this.season.name} · ${this.planningDate}`;
     }
     const firstSlot = this.generationResult.blocks[0]?.slot;
     this.selectedActivityDate = firstSlot?.date ?? '';
@@ -407,13 +704,15 @@ export class AppComponent implements OnInit, OnDestroy {
 
     this.saveState = 'saving';
     this.saveMessage = '';
+    const existingScheduleId = this.savedScheduleId;
     try {
       const stored = await this.savedScheduleService.save({
+        ...(this.savedScheduleId ? { id: this.savedScheduleId } : {}),
         userId: this.currentUser.id,
         name,
         seasonName: this.generatedSeason.name,
-        rangeStart: this.startDate,
-        rangeEnd: this.endDate,
+        rangeStart: this.generatedSeason.startDate,
+        rangeEnd: this.generatedSeason.endDate,
         seed: this.generationResult.diagnostics.seed,
         algorithmVersion: this.generationResult.diagnostics.engineVersion,
         scheduleData: buildSavedScheduleData({
@@ -439,7 +738,7 @@ export class AppComponent implements OnInit, OnDestroy {
       this.saveMessage = 'Programación guardada correctamente.';
       await this.loadSavedSchedules();
     } catch (error) {
-      this.savedScheduleId = undefined;
+      this.savedScheduleId = existingScheduleId;
       this.saveState = 'error';
       this.saveMessage = error instanceof Error ? error.message : 'No se pudo guardar la programación.';
     }
@@ -502,9 +801,40 @@ export class AppComponent implements OnInit, OnDestroy {
       );
       this.season = { ...restored.season };
       this.groupCategories = restored.categories.map((category) => ({ ...category }));
-      this.activities = restored.activities.map((activity) => ({ ...activity }));
-      this.activityEligibility = restored.eligibility.map((entry) => ({ ...entry }));
-      this.timeBlocks = restored.timeBlocks.map((block) => ({ ...block }));
+      this.activities = restored.activities
+        .filter((activity) => activity.countsTowardCycle !== false)
+        .map((activity) => ({ ...activity }));
+      const catalogActivityIds = new Set(this.activities.map((activity) => activity.id));
+      this.activityEligibility = restored.eligibility
+        .filter((entry) => catalogActivityIds.has(entry.activityId))
+        .map((entry) => ({ ...entry }));
+      const lastGeneratedDate = restored.result.blocks.at(-1)?.slot.date ?? stored.rangeEnd ?? this.planningDate;
+      const lastDayBlocks = restored.result.blocks.filter((block) => block.slot.date === lastGeneratedDate);
+      const usedBlockIds = new Set(lastDayBlocks.map((block) => block.slot.timeBlockId));
+      const isSpecialDay = lastDayBlocks.some((block) => block.slot.timeBlockId.startsWith('special-all-day-'));
+      const hasAfternoonActivity = lastDayBlocks.some(
+        (block) => block.slot.timeBlockId.startsWith('special-afternoon-'),
+      );
+      this.timeBlocks = restored.timeBlocks
+        .filter((block) => !block.id.startsWith('special-'))
+        .map((block) => ({ ...block, active: isSpecialDay ? false : usedBlockIds.has(block.id) }));
+      this.dayMode = isSpecialDay
+        ? 'special'
+        : hasAfternoonActivity
+          ? 'morning'
+        : this.timeBlocks.filter((block) => block.active).every((block) => /^M\d+$/i.test(block.name.trim())) &&
+            this.timeBlocks.some((block) => block.active)
+          ? 'morning'
+          : this.timeBlocks.every((block) => block.active)
+            ? 'regular'
+            : 'custom';
+      this.specialDayActivityName = restored.activities.find(
+        (activity) => activity.id.startsWith(`special-${lastGeneratedDate}-`) && activity.countsTowardCycle === false,
+      )?.name ?? this.specialDayActivityName;
+      this.afternoonActivityName = restored.activities.find(
+        (activity) => activity.id.startsWith(`special-afternoon-${lastGeneratedDate}-`) && activity.countsTowardCycle === false,
+      )?.name ?? this.afternoonActivityName;
+      this.dailyUnavailableActivityIds = [];
       this.groupConfigurations = restored.categories.map((category) => {
         const groups = restored.groups.filter((group) => group.categoryId === category.id);
         return {
@@ -528,8 +858,9 @@ export class AppComponent implements OnInit, OnDestroy {
         restored.activities,
         restored.timeBlocks,
       );
-      this.startDate = stored.rangeStart ?? restored.result.blocks[0]?.slot.date ?? this.startDate;
-      this.endDate = stored.rangeEnd ?? restored.result.blocks.at(-1)?.slot.date ?? this.endDate;
+      this.selectedGroupDate = this.groupScheduleDates[0] ?? '';
+      this.startDate = lastGeneratedDate;
+      this.endDate = lastGeneratedDate;
       this.seed = stored.seed ?? restored.result.diagnostics.seed;
       this.scheduleName = stored.name;
       this.savedScheduleId = stored.id;
@@ -704,11 +1035,14 @@ export class AppComponent implements OnInit, OnDestroy {
     if (!Number.isSafeInteger(this.seed) || this.seed < 0 || this.seed > 4_294_967_295) {
       errors.push('La semilla debe ser un entero entre 0 y 4294967295.');
     }
-    if (dates.length === 0) errors.push('Selecciona un rango de fechas válido.');
-    if (dates.some((date) => date < this.season.startDate || date > this.season.endDate)) {
-      errors.push('El rango debe estar completamente dentro de la temporada.');
+    if (dates.length !== 1) errors.push('Selecciona una sola fecha para preparar el día.');
+    if (this.dayMode !== 'special' && this.activeBlocks === 0) errors.push('Activa al menos un bloque.');
+    if (this.dayMode === 'special' && !this.specialDayActivityName.trim()) {
+      errors.push('Indica el nombre de la actividad especial del día.');
     }
-    if (this.activeBlocks === 0) errors.push('Activa al menos un bloque.');
+    if (this.dayMode === 'morning' && !this.afternoonActivityName.trim()) {
+      errors.push('Indica el nombre de la actividad de la tarde.');
+    }
     if (this.activeGroupCount === 0) errors.push('Configura al menos un grupo activo.');
     if (this.activeActivities === 0) errors.push('Activa al menos una actividad.');
     const activeBlocks = this.timeBlocks.filter((block) => block.active);
@@ -723,13 +1057,16 @@ export class AppComponent implements OnInit, OnDestroy {
       activeActivities.some(
         (activity) =>
           !activity.name.trim() ||
+          !Number.isInteger(activity.minGroups ?? 1) ||
+          (activity.minGroups ?? 1) < 1 ||
           !Number.isInteger(activity.maxGroups) ||
           activity.maxGroups < 1 ||
+          (activity.minGroups ?? 1) > activity.maxGroups ||
           (activity.maxParticipants !== undefined &&
             (!Number.isInteger(activity.maxParticipants) || activity.maxParticipants < 1)),
       )
     ) {
-      errors.push('Las actividades activas necesitan nombre y capacidades enteras mayores que cero.');
+      errors.push('Las actividades activas necesitan nombre y un mínimo/máximo de grupos válido.');
     }
     if (
       activeActivities.some((activity) => activity.maxParticipants !== undefined) &&
@@ -743,6 +1080,170 @@ export class AppComponent implements OnInit, OnDestroy {
       errors.push('Indica participantes por grupo para usar actividades con máximo de participantes.');
     }
     return errors;
+  }
+
+  private buildDailyGenerationConfiguration(groups: readonly CampGroup[]) {
+    if (this.dayMode !== 'special' && this.dayMode !== 'morning') {
+      const activeBlocks = this.timeBlocks.filter((block) => block.active);
+      return {
+        timeBlocks: activeBlocks,
+        activities: this.activities,
+        eligibility: this.activityEligibility,
+        hardConstraints: {
+          activityAvailability: activeBlocks.flatMap((block) =>
+            this.dailyUnavailableActivityIds.map((activityId) => ({
+              activityId,
+              date: this.planningDate,
+              timeBlockId: block.id,
+              available: false,
+            }))),
+          groupUnavailability: [],
+        },
+      };
+    }
+
+    if (this.dayMode === 'morning') {
+      const morningBlocks = this.timeBlocks.filter((block) => block.active);
+      const afternoonBlock: TimeBlock = {
+        id: `special-afternoon-${this.planningDate}`,
+        seasonId: this.season.id,
+        name: 'Actividad de la tarde',
+        order: Math.max(...morningBlocks.map((block) => block.order), 0) + 1,
+        active: true,
+      };
+      const groupCountByCategory = new Map<string, number>();
+      for (const group of groups.filter((item) => item.active)) {
+        groupCountByCategory.set(group.categoryId, (groupCountByCategory.get(group.categoryId) ?? 0) + 1);
+      }
+      const activityPrefix = `special-afternoon-${this.planningDate}-`;
+      const afternoonActivities = this.groupCategories
+        .filter((category) => (groupCountByCategory.get(category.id) ?? 0) > 0)
+        .map<Activity>((category) => ({
+          id: `${activityPrefix}${category.id}`,
+          name: this.afternoonActivityName.trim(),
+          displayCategory: `Actividad de la tarde · ${category.name}`,
+          active: true,
+          minGroups: 1,
+          maxGroups: groupCountByCategory.get(category.id)!,
+          countsTowardCycle: false,
+        }));
+      const afternoonEligibility = afternoonActivities.map<ActivityEligibility>((activity) => ({
+        activityId: activity.id,
+        groupCategoryId: activity.id.slice(activityPrefix.length),
+      }));
+      const regularActivityIds = this.activities.filter((activity) => activity.active).map((activity) => activity.id);
+      return {
+        timeBlocks: [...morningBlocks, afternoonBlock],
+        activities: [...this.activities, ...afternoonActivities],
+        eligibility: [...this.activityEligibility, ...afternoonEligibility],
+        hardConstraints: {
+          activityAvailability: [
+            ...morningBlocks.flatMap((block) => [
+              ...this.dailyUnavailableActivityIds.map((activityId) => ({
+                activityId,
+                date: this.planningDate,
+                timeBlockId: block.id,
+                available: false,
+              })),
+              ...afternoonActivities.map((activity) => ({
+                activityId: activity.id,
+                date: this.planningDate,
+                timeBlockId: block.id,
+                available: false,
+              })),
+            ]),
+            ...regularActivityIds.map((activityId) => ({
+              activityId,
+              date: this.planningDate,
+              timeBlockId: afternoonBlock.id,
+              available: false,
+            })),
+          ],
+          groupUnavailability: [],
+        },
+      };
+    }
+
+    const specialBlock: TimeBlock = {
+      id: `special-all-day-${this.planningDate}`,
+      seasonId: this.season.id,
+      name: 'Todo el día',
+      order: 1,
+      active: true,
+    };
+    const groupCountByCategory = new Map<string, number>();
+    for (const group of groups.filter((item) => item.active)) {
+      groupCountByCategory.set(group.categoryId, (groupCountByCategory.get(group.categoryId) ?? 0) + 1);
+    }
+    const specialActivities = this.groupCategories
+      .filter((category) => (groupCountByCategory.get(category.id) ?? 0) > 0)
+      .map<Activity>((category) => ({
+        id: `special-${this.planningDate}-${category.id}`,
+        name: this.specialDayActivityName.trim(),
+        displayCategory: `Actividad especial · ${category.name}`,
+        active: true,
+        minGroups: 1,
+        maxGroups: groupCountByCategory.get(category.id)!,
+        countsTowardCycle: false,
+      }));
+    const specialEligibility = specialActivities.map<ActivityEligibility>((activity) => ({
+      activityId: activity.id,
+      groupCategoryId: activity.id.slice(`special-${this.planningDate}-`.length),
+    }));
+    const regularActivityIds = this.activities.filter((activity) => activity.active).map((activity) => activity.id);
+    return {
+      timeBlocks: [specialBlock],
+      activities: [...this.activities, ...specialActivities],
+      eligibility: [...this.activityEligibility, ...specialEligibility],
+      hardConstraints: {
+        activityAvailability: regularActivityIds.map((activityId) => ({
+          activityId,
+          date: this.planningDate,
+          timeBlockId: specialBlock.id,
+          available: false,
+        })),
+        groupUnavailability: [],
+      },
+    };
+  }
+
+  private realCycleSnapshots(): readonly ActivityCycleSnapshot[] {
+    return this.executionState.cycles.map((cycle) => ({
+      cycle: {
+        id: cycle.id,
+        groupId: cycle.groupId,
+        cycleNumber: cycle.cycleNumber,
+        status: cycle.status,
+        startedAt: cycle.startedAt,
+        ...(cycle.completedAt ? { completedAt: cycle.completedAt } : {}),
+      },
+      requirements: cycle.requirements.map((requirement) => ({
+        cycleId: cycle.id,
+        activityId: requirement.activityId,
+        status: requirement.status,
+      })),
+    }));
+  }
+
+  private realCompletedHistory(): readonly Assignment[] {
+    return (this.executionState.history ?? this.executionState.progress)
+      .filter((progress) => progress.status === 'completed')
+      .map((progress) => ({
+        id: progress.id,
+        groupId: progress.groupId,
+        activityId: progress.activityId,
+        date: progress.date,
+        timeBlockId: progress.timeBlockId,
+        ...(progress.cycleId ? { cycleId: progress.cycleId } : {}),
+        source: 'automatic',
+        status: 'completed',
+        locked: false,
+      }));
+  }
+
+  private syncSeasonDates(): void {
+    if (this.startDate) this.season.startDate = this.startDate;
+    if (this.endDate) this.season.endDate = this.endDate;
   }
 
   private toProjectedCycleView(

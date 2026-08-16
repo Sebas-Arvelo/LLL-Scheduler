@@ -4,8 +4,10 @@ export interface Activity {
   id: ActivityId;
   name: string;
   active: boolean;
+  minGroups?: number;
   maxGroups: number;
   maxParticipants?: number;
+  countsTowardCycle?: boolean;
   displayCategory?: string;
   description?: string;
 }

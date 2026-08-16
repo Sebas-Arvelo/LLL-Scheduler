@@ -109,7 +109,23 @@ describe('scheduling domain contracts', () => {
       maxParticipants: -1,
     });
 
-    expect(issues.map((issue) => issue.code)).toEqual(['INVALID_MAX_GROUPS', 'INVALID_MAX_PARTICIPANTS']);
+    expect(issues.map((issue) => issue.code)).toEqual([
+      'INVALID_MIN_GROUPS',
+      'INVALID_MAX_GROUPS',
+      'INVALID_MAX_PARTICIPANTS',
+    ]);
+  });
+
+  it('rejects an activity minimum greater than its maximum', () => {
+    const issues = validateActivity({
+      id: 'invalid-range',
+      name: 'Invalid range',
+      active: true,
+      minGroups: 3,
+      maxGroups: 2,
+    });
+
+    expect(issues.map((issue) => issue.code)).toEqual(['INVALID_MIN_GROUPS']);
   });
 
   it('validates participant counts, block order and season date ranges', () => {

@@ -113,13 +113,24 @@ function parseSnapshot(value: unknown): ConfigurationSnapshot {
 
   const activities = array(snapshot['activities'], 'configurationSnapshot.activities').map((value, index) => {
     const item = record(value, `configurationSnapshot.activities[${index}]`);
+    const maxGroups = integer(item['maxGroups'], `configurationSnapshot.activities[${index}].maxGroups`, 1);
+    const minGroups = item['minGroups'] !== undefined
+      ? integer(item['minGroups'], `configurationSnapshot.activities[${index}].minGroups`, 1)
+      : 1;
+    if (minGroups > maxGroups) {
+      throw new BadRequestError(`Activity ${index} has minGroups greater than maxGroups.`);
+    }
     return {
       id: identifier(item['id'], `configurationSnapshot.activities[${index}].id`),
       name: text(item['name'], `configurationSnapshot.activities[${index}].name`)!,
       active: boolean(item['active'], `configurationSnapshot.activities[${index}].active`),
-      maxGroups: integer(item['maxGroups'], `configurationSnapshot.activities[${index}].maxGroups`, 1),
+      ...(item['minGroups'] !== undefined ? { minGroups } : {}),
+      maxGroups,
       ...(item['maxParticipants'] !== undefined
         ? { maxParticipants: integer(item['maxParticipants'], `configurationSnapshot.activities[${index}].maxParticipants`, 1) }
+        : {}),
+      ...(item['countsTowardCycle'] !== undefined
+        ? { countsTowardCycle: boolean(item['countsTowardCycle'], `configurationSnapshot.activities[${index}].countsTowardCycle`) }
         : {}),
       ...(text(item['displayCategory'], `configurationSnapshot.activities[${index}].displayCategory`, false)
         ? { displayCategory: text(item['displayCategory'], `configurationSnapshot.activities[${index}].displayCategory`, false) }
@@ -263,17 +274,29 @@ export function validateCreateScheduleRequest(value: unknown): CreateScheduleReq
     throw new ConflictError('A group cannot be both assigned and unassigned in the same schedule slot.');
   }
 
-  const capacityByActivitySlot = new Map<string, { groups: number; participants: number }>();
+  const capacityByActivitySlot = new Map<string, { groups: number; participants: number; programIds: Set<string> }>();
   for (const assignment of assignments) {
     const key = `${assignment.activityId}\u0000${assignment.date}\u0000${assignment.timeBlockId}`;
-    const usage = capacityByActivitySlot.get(key) ?? { groups: 0, participants: 0 };
+    const usage = capacityByActivitySlot.get(key) ?? { groups: 0, participants: 0, programIds: new Set<string>() };
     usage.groups += 1;
-    usage.participants += groupById.get(assignment.groupId)?.participantCount ?? 0;
+    const group = groupById.get(assignment.groupId)!;
+    usage.participants += group.participantCount ?? 0;
+    usage.programIds.add(group.categoryId);
     capacityByActivitySlot.set(key, usage);
     const activity = activityById.get(assignment.activityId)!;
     if (usage.groups > activity.maxGroups ||
         (activity.maxParticipants !== undefined && usage.participants > activity.maxParticipants)) {
       throw new ConflictError(`Assignments exceed the configured capacity for activity ${assignment.activityId}.`);
+    }
+    if (usage.programIds.size > 1) {
+      throw new ConflictError(`Assignments mix programs in activity ${assignment.activityId}.`);
+    }
+  }
+  for (const [key, usage] of capacityByActivitySlot) {
+    const activityId = key.split('\u0000')[0];
+    const activity = activityById.get(activityId)!;
+    if (usage.groups < (activity.minGroups ?? 1)) {
+      throw new ConflictError(`Assignments do not reach the configured minimum for activity ${activityId}.`);
     }
   }
 

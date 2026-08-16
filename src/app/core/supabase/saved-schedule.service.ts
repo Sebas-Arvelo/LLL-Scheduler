@@ -19,6 +19,7 @@ export interface SavedScheduleRecord extends SavedScheduleSummary {
 }
 
 export interface SaveScheduleCommand {
+  id?: string;
   userId: string;
   name: string;
   seasonName?: string;
@@ -78,7 +79,7 @@ export class SavedScheduleService implements SavedScheduleGateway {
   async save(command: SaveScheduleCommand): Promise<SavedScheduleRecord> {
     supabaseClientService.requireConfigured();
     const client = await supabaseClientService.getClient();
-    const { data, error } = await client.from('saved_schedules').insert({
+    const values = {
       user_id: command.userId,
       name: command.name,
       season_name: command.seasonName ?? null,
@@ -87,7 +88,11 @@ export class SavedScheduleService implements SavedScheduleGateway {
       seed: command.seed ?? null,
       algorithm_version: command.algorithmVersion ?? null,
       schedule_data: command.scheduleData,
-    }).select().single<SavedScheduleRow>();
+    };
+    const query = command.id
+      ? client.from('saved_schedules').update(values).eq('id', command.id).eq('user_id', command.userId)
+      : client.from('saved_schedules').insert(values);
+    const { data, error } = await query.select().single<SavedScheduleRow>();
     if (error) throw new Error('No se pudo guardar la programación.');
     return record(data);
   }
@@ -115,12 +120,6 @@ export class SavedScheduleService implements SavedScheduleGateway {
   async delete(id: string, userId: string): Promise<void> {
     supabaseClientService.requireConfigured();
     const client = await supabaseClientService.getClient();
-    const { data: completed, error: progressError } = await client.from('assignment_progress')
-      .select('id').eq('saved_schedule_id', id).eq('user_id', userId).eq('status', 'completed').limit(1);
-    if (progressError) throw new Error('No se pudo verificar el historial de la programación.');
-    if (completed && completed.length > 0) {
-      throw new Error('No se puede eliminar una programación que contiene actividades completadas.');
-    }
     const { data, error } = await client.from('saved_schedules').delete()
       .eq('id', id).eq('user_id', userId).select('id').maybeSingle();
     if (error || !data) throw new Error('No se pudo eliminar la programación.');

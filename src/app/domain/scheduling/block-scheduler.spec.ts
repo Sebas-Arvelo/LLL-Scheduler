@@ -143,6 +143,11 @@ function expectValidResult(result: SchedulingResult, schedulingInput: Scheduling
     );
     const maxGroups = availability?.maxGroupsOverride ?? assignedActivity.maxGroups;
     const maxParticipants = availability?.maxParticipantsOverride ?? assignedActivity.maxParticipants;
+    if (assignments.length > 0) {
+      expect(assignments.length).toBeGreaterThanOrEqual(assignedActivity.minGroups ?? 1);
+      const programIds = new Set(assignments.map((item) => groupsById.get(item.groupId)!.categoryId));
+      expect(programIds.size).toBe(1);
+    }
     expect(assignments.length).toBeLessThanOrEqual(maxGroups);
     if (maxParticipants !== undefined) {
       const participants = assignments.reduce(
@@ -182,6 +187,58 @@ describe('block scheduling engine', () => {
 
     expect(result.assignments.length).toBe(1);
     expect(result.unassigned[0].reasonCode).toBe('CAPACITY_EXHAUSTED');
+    expectValidResult(result, schedulingInput);
+  });
+
+  it('redistributes groups so every used activity reaches its minimum', () => {
+    const groups = [group('g1'), group('g2'), group('g3')];
+    const activities = [
+      activity('minimum-two', { minGroups: 2, maxGroups: 2 }),
+      activity('other', { maxGroups: 2 }),
+    ];
+    const schedulingInput = input({
+      groups,
+      activities,
+      cycles: [cycle('g1', ['minimum-two']), cycle('g2', ['other']), cycle('g3', ['other'])],
+    });
+    const result = scheduleBlock(schedulingInput);
+
+    expect(result.assignments.length).toBe(3);
+    expect(result.assignments.filter((item) => item.activityId === 'minimum-two').length).toBe(2);
+    expectValidResult(result, schedulingInput);
+  });
+
+  it('does not mix group programs in the same activity and block', () => {
+    const groups = [
+      group('alpha-1', 'alpha'),
+      group('alpha-2', 'alpha'),
+      group('beta-1', 'beta'),
+      group('beta-2', 'beta'),
+    ];
+    const activities = [activity('a', { maxGroups: 2 }), activity('b', { maxGroups: 2 })];
+    const schedulingInput = input({ groups, activities, seed: 4 });
+    const result = scheduleBlock(schedulingInput);
+
+    expect(result.assignments.length).toBe(4);
+    expectValidResult(result, schedulingInput);
+  });
+
+  it('allocates minimum-sized activities to programs that can fill them', () => {
+    const groups = [
+      group('alpha-only', 'alpha'),
+      group('beta-1', 'beta'),
+      group('beta-2', 'beta'),
+    ];
+    const activities = [
+      activity('needs-two', { minGroups: 2, maxGroups: 2 }),
+      activity('accepts-one', { maxGroups: 2 }),
+    ];
+    const schedulingInput = input({ groups, activities, seed: 1 });
+    const result = scheduleBlock(schedulingInput);
+
+    expect(result.assignments.length).toBe(3);
+    expect(result.assignments.filter((item) => item.activityId === 'needs-two').map((item) => item.groupId).sort())
+      .toEqual(['beta-1', 'beta-2']);
     expectValidResult(result, schedulingInput);
   });
 
@@ -364,6 +421,20 @@ describe('block scheduling engine', () => {
     expectValidResult(result, schedulingInput);
   });
 
+  it('uses a premature repetition instead of leaving a group unassigned when no pending activity is viable', () => {
+    const schedulingInput = input({
+      groups: [group('g1')],
+      activities: [activity('pending'), activity('completed')],
+      cycles: [cycle('g1', ['pending'], ['completed'])],
+      unavailableActivities: ['pending'],
+    });
+    const result = scheduleBlock(schedulingInput);
+
+    expect(assignmentMap(result)['g1']).toBe('completed');
+    expect(result.unassigned).toEqual([]);
+    expectValidResult(result, schedulingInput);
+  });
+
   it('skips inactive groups and records a warning', () => {
     const inactiveGroup = { ...group('inactive'), active: false };
     const result = scheduleBlock(input({ groups: [inactiveGroup], activities: [activity('a')] }));
@@ -387,6 +458,35 @@ describe('block scheduling engine', () => {
     expect(result.status).toBe('invalid_input');
     expect(result.assignments).toEqual([invalidLocked]);
     expect(result.assignments.some((item) => item.groupId === 'g2')).toBeFalse();
+    expect(result.diagnostics.errors[0].code).toBe('INVALID_LOCKED_ASSIGNMENT');
+  });
+
+  it('rejects locked assignments that mix programs in one activity and block', () => {
+    const result = scheduleBlock(
+      input({
+        groups: [group('alpha-group', 'alpha'), group('beta-group', 'beta')],
+        activities: [activity('shared', { maxGroups: 2 })],
+        locked: [locked('alpha-group', 'shared'), locked('beta-group', 'shared')],
+      }),
+    );
+
+    expect(result.status).toBe('invalid_input');
+    expect(result.diagnostics.errors).toEqual([
+      jasmine.objectContaining({ code: 'INVALID_LOCKED_ASSIGNMENT' }),
+    ]);
+  });
+
+  it('rejects a locked activity when its minimum cannot be reached', () => {
+    const result = scheduleBlock(
+      input({
+        groups: [group('only-group')],
+        activities: [activity('needs-two', { minGroups: 2, maxGroups: 2 })],
+        locked: [locked('only-group', 'needs-two')],
+      }),
+    );
+
+    expect(result.status).toBe('invalid_input');
+    expect(result.assignments).toEqual([locked('only-group', 'needs-two')]);
     expect(result.diagnostics.errors[0].code).toBe('INVALID_LOCKED_ASSIGNMENT');
   });
 

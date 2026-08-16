@@ -72,6 +72,8 @@ export interface SchedulingInput {
   history: readonly Assignment[];
   /** Assignments from earlier slots in the same in-memory generation. */
   projectedAssignments?: readonly Assignment[];
+  /** Earlier or reserved assignments that cannot be duplicated by the group on the same day. */
+  sameDayAssignments?: readonly Assignment[];
   lockedAssignments: readonly Assignment[];
   hardConstraints: SchedulingHardConstraints;
   preferences?: SchedulingPreferences;

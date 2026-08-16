@@ -236,6 +236,7 @@ begin
         select 1
         from jsonb_array_elements(v_schedule_data #> '{configuration,activities}') activity
         where coalesce((activity->>'active')::boolean, false)
+          and coalesce((activity->>'countsTowardCycle')::boolean, true)
           and exists (
             select 1 from jsonb_array_elements(v_schedule_data #> '{configuration,eligibility}') eligibility
             where eligibility->>'activityId' = activity->>'id'
@@ -258,6 +259,7 @@ begin
       select distinct v_user_id, v_cycle_id, activity->>'id', 'pending'
       from jsonb_array_elements(v_schedule_data #> '{configuration,activities}') activity
       where coalesce((activity->>'active')::boolean, false)
+        and coalesce((activity->>'countsTowardCycle')::boolean, true)
         and exists (
           select 1 from jsonb_array_elements(v_schedule_data #> '{configuration,eligibility}') eligibility
           where eligibility->>'activityId' = activity->>'id'

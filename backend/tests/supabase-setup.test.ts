@@ -24,4 +24,5 @@ test('Supabase execution setup is idempotent and keeps one progress row per plan
   assert.match(sql, /create or replace function public\.initialize_schedule_execution/i);
   assert.match(sql, /create or replace function public\.set_assignment_progress_status/i);
   assert.match(sql, /status in \('planned', 'completed', 'cancelled'\)/i);
+  assert.match(sql, /coalesce\(\(activity->>'countsTowardCycle'\)::boolean, true\)/i);
 });

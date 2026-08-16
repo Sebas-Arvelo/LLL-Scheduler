@@ -19,6 +19,7 @@ export interface MatchingProblem {
   candidatesByGroup: ReadonlyMap<GroupId, readonly ActivityId[]>;
   activityCapacities: ReadonlyMap<ActivityId, number>;
   forbiddenEdges: ReadonlySet<string>;
+  forcedMatches?: ReadonlyMap<GroupId, ActivityId>;
   edgeCost: (groupId: GroupId, activityId: ActivityId) => number;
 }
 
@@ -41,7 +42,20 @@ function addEdge(graph: FlowEdge[][], from: number, to: number, capacity: number
 }
 
 export function solveMinCostMatching(problem: MatchingProblem): MatchingSolution {
-  const groupIds = [...problem.groupIds].sort();
+  const forcedMatches = new Map(problem.forcedMatches ?? []);
+  const forcedActivityLoad = new Map<ActivityId, number>();
+  for (const [groupId, activityId] of forcedMatches) {
+    if (!(problem.candidatesByGroup.get(groupId) ?? []).includes(activityId) ||
+        problem.forbiddenEdges.has(matchingEdgeKey(groupId, activityId))) {
+      return { matches: new Map(), flow: -1, cost: Number.POSITIVE_INFINITY };
+    }
+    forcedActivityLoad.set(activityId, (forcedActivityLoad.get(activityId) ?? 0) + 1);
+  }
+  if ([...forcedActivityLoad].some(([activityId, load]) => load > (problem.activityCapacities.get(activityId) ?? 0))) {
+    return { matches: new Map(), flow: -1, cost: Number.POSITIVE_INFINITY };
+  }
+
+  const groupIds = [...problem.groupIds].filter((groupId) => !forcedMatches.has(groupId)).sort();
   const activityIds = [...problem.activityIds].sort();
   const source = 0;
   const firstGroupNode = 1;
@@ -69,11 +83,12 @@ export function solveMinCostMatching(problem: MatchingProblem): MatchingSolution
   }
 
   for (const activityId of activityIds) {
-    addEdge(graph, activityNode.get(activityId)!, sink, Math.max(0, problem.activityCapacities.get(activityId) ?? 0), 0);
+    const remainingCapacity = (problem.activityCapacities.get(activityId) ?? 0) - (forcedActivityLoad.get(activityId) ?? 0);
+    addEdge(graph, activityNode.get(activityId)!, sink, Math.max(0, remainingCapacity), 0);
   }
 
-  let flow = 0;
-  let cost = 0;
+  let flow = forcedMatches.size;
+  let cost = [...forcedMatches].reduce((sum, [groupId, activityId]) => sum + problem.edgeCost(groupId, activityId), 0);
 
   while (true) {
     const distance = Array(graph.length).fill(Number.POSITIVE_INFINITY) as number[];
@@ -116,7 +131,7 @@ export function solveMinCostMatching(problem: MatchingProblem): MatchingSolution
     cost += distance[sink];
   }
 
-  const matches = new Map<GroupId, ActivityId>();
+  const matches = new Map<GroupId, ActivityId>(forcedMatches);
   for (const candidate of candidateEdges) {
     if (candidate.edge.capacity === 0) {
       matches.set(candidate.groupId, candidate.activityId);

@@ -24,6 +24,7 @@ export interface ScheduleGridColumn {
   key: string;
   date: LocalDate;
   timeBlockId: string;
+  timeBlockName: string;
   label: string;
   timeLabel?: string;
 }
@@ -59,6 +60,7 @@ export interface ActivitySlotAssignmentView {
   displayCategory: string;
   groups: readonly ActivitySlotGroupView[];
   usedGroups: number;
+  minGroups: number;
   maxGroups: number;
   usedParticipants?: number;
   maxParticipants?: number;
@@ -137,6 +139,11 @@ export function buildScheduleGenerationInput(options: {
   activities: readonly Activity[];
   groupCategories: readonly GroupCategory[];
   activityEligibility: readonly ActivityEligibility[];
+  initialCycleSnapshots?: ScheduleGenerationInput['initialCycleSnapshots'];
+  history?: ScheduleGenerationInput['history'];
+  lockedAssignments?: ScheduleGenerationInput['lockedAssignments'];
+  hardConstraints?: ScheduleGenerationInput['hardConstraints'];
+  preferences?: ScheduleGenerationInput['preferences'];
   seed: number;
 }): ScheduleGenerationInput {
   return {
@@ -155,10 +162,13 @@ export function buildScheduleGenerationInput(options: {
     activities: options.activities.map((activity) => ({ ...activity })),
     groupCategories: options.groupCategories.map((category) => ({ ...category })),
     activityEligibility: options.activityEligibility.map((entry) => ({ ...entry })),
-    initialCycleSnapshots: [],
-    history: [],
-    lockedAssignments: [],
-    hardConstraints: { activityAvailability: [], groupUnavailability: [] },
+    initialCycleSnapshots: structuredClone(options.initialCycleSnapshots ?? []),
+    history: structuredClone(options.history ?? []),
+    lockedAssignments: structuredClone(options.lockedAssignments ?? []),
+    hardConstraints: structuredClone(
+      options.hardConstraints ?? { activityAvailability: [], groupUnavailability: [] },
+    ),
+    ...(options.preferences ? { preferences: structuredClone(options.preferences) } : {}),
     seed: Number.isFinite(options.seed) ? Math.trunc(options.seed) : 0,
   };
 }
@@ -183,6 +193,7 @@ export function buildScheduleGrid(
       key: `${slot.date}\u0000${slot.timeBlockId}`,
       date: slot.date,
       timeBlockId: slot.timeBlockId,
+      timeBlockName: block?.name ?? slot.timeBlockId,
       label: `${slot.date} · ${block?.name ?? slot.timeBlockId}`,
       ...(block?.startTime || block?.endTime
         ? { timeLabel: `${block.startTime ?? '—'}–${block.endTime ?? '—'}` }
@@ -272,6 +283,7 @@ export function buildActivitySlotView(
         displayCategory: activity.displayCategory ?? 'Sin tipo',
         groups: sortedGroups,
         usedGroups: sortedGroups.length,
+        minGroups: activity.minGroups ?? 1,
         maxGroups: activity.maxGroups,
         ...(activity.maxParticipants !== undefined ? { maxParticipants: activity.maxParticipants } : {}),
         ...(activity.maxParticipants !== undefined && hasCompleteParticipantCount

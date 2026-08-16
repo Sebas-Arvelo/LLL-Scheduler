@@ -20,17 +20,19 @@ import {
 } from '../validation';
 import { matchingEdgeKey, solveMinCostMatching, type MatchingSolution } from './min-cost-matching';
 
-export const BLOCK_SCHEDULER_ALGORITHM_VERSION = 'min-cost-block-matching-v1';
+export const BLOCK_SCHEDULER_ALGORITHM_VERSION = 'min-cost-block-matching-v2';
 
 interface EffectiveActivity {
   activity: Activity;
   available: boolean;
+  minGroups: number;
   maxGroups: number;
   maxParticipants?: number;
 }
 
 interface SearchState {
   forbiddenEdges: ReadonlySet<string>;
+  forcedMatches: ReadonlyMap<GroupId, ActivityId>;
   signature: string;
   solution: MatchingSolution;
 }
@@ -105,6 +107,7 @@ function effectiveActivities(
         {
           activity,
           available: activity.active && (override?.available ?? true),
+          minGroups: activity.minGroups ?? 1,
           maxGroups: override?.maxGroupsOverride ?? activity.maxGroups,
           maxParticipants: override?.maxParticipantsOverride ?? activity.maxParticipants,
         },
@@ -187,6 +190,27 @@ function participantViolation(
   return undefined;
 }
 
+function minimumGroupViolation(
+  matches: ReadonlyMap<GroupId, ActivityId>,
+  activities: ReadonlyMap<ActivityId, EffectiveActivity>,
+  lockedGroupLoad: ReadonlyMap<ActivityId, number>,
+): { activityId: ActivityId; groupIds: GroupId[] } | undefined {
+  const assignedByActivity = new Map<ActivityId, GroupId[]>();
+  for (const [groupId, activityId] of matches) {
+    const groupIds = assignedByActivity.get(activityId) ?? [];
+    groupIds.push(groupId);
+    assignedByActivity.set(activityId, groupIds);
+  }
+  for (const activityId of [...activities.keys()].sort()) {
+    const groupIds = assignedByActivity.get(activityId) ?? [];
+    const load = (lockedGroupLoad.get(activityId) ?? 0) + groupIds.length;
+    if (load > 0 && load < activities.get(activityId)!.minGroups) {
+      return { activityId, groupIds: [...groupIds].sort() };
+    }
+  }
+  return undefined;
+}
+
 function solveWithParticipantCapacity(
   groupIds: readonly GroupId[],
   activityIds: readonly ActivityId[],
@@ -195,49 +219,159 @@ function solveWithParticipantCapacity(
   edgeCost: (groupId: GroupId, activityId: ActivityId) => number,
   groupsById: ReadonlyMap<GroupId, CampGroup>,
   activities: ReadonlyMap<ActivityId, EffectiveActivity>,
+  lockedGroupLoad: ReadonlyMap<ActivityId, number>,
   lockedParticipantLoad: ReadonlyMap<ActivityId, number>,
 ): ParticipantCapacitySolution {
   let branchAndBoundNodes = 0;
   let branchAndBoundBranches = 0;
-  const makeState = (forbiddenEdges: ReadonlySet<string>): SearchState => {
+  const stateSignature = (
+    forbiddenEdges: ReadonlySet<string>,
+    forcedMatches: ReadonlyMap<GroupId, ActivityId>,
+  ) => `${[...forbiddenEdges].sort().join('|')}#${[...forcedMatches].sort(([left], [right]) => left.localeCompare(right)).map(([groupId, activityId]) => matchingEdgeKey(groupId, activityId)).join('|')}`;
+  const makeState = (
+    forbiddenEdges: ReadonlySet<string>,
+    forcedMatches: ReadonlyMap<GroupId, ActivityId>,
+  ): SearchState | undefined => {
     branchAndBoundNodes += 1;
-    const signature = [...forbiddenEdges].sort().join('|');
+    const signature = stateSignature(forbiddenEdges, forcedMatches);
+    const solution = solveMinCostMatching({
+      groupIds,
+      activityIds,
+      candidatesByGroup,
+      activityCapacities,
+      forbiddenEdges,
+      forcedMatches,
+      edgeCost,
+    });
+    if (solution.flow < 0) return undefined;
     return {
       forbiddenEdges,
+      forcedMatches,
       signature,
-      solution: solveMinCostMatching({
-        groupIds,
-        activityIds,
-        candidatesByGroup,
-        activityCapacities,
-        forbiddenEdges,
-        edgeCost,
-      }),
+      solution,
     };
   };
 
-  const queue: SearchState[] = [makeState(new Set())];
-  const visited = new Set<string>(['']);
+  const initial = makeState(new Set(), new Map());
+  const queue: SearchState[] = initial ? [initial] : [];
+  const visited = new Set<string>(initial ? [initial.signature] : []);
+  const addState = (forbiddenEdges: ReadonlySet<string>, forcedMatches: ReadonlyMap<GroupId, ActivityId>) => {
+    const signature = stateSignature(forbiddenEdges, forcedMatches);
+    if (visited.has(signature)) return;
+    visited.add(signature);
+    const state = makeState(forbiddenEdges, forcedMatches);
+    if (state) {
+      branchAndBoundBranches += 1;
+      queue.push(state);
+    }
+  };
 
   while (queue.length > 0) {
     queue.sort(compareSearchState);
     const state = queue.shift()!;
-    const violation = participantViolation(state.solution.matches, groupsById, activities, lockedParticipantLoad);
-    if (!violation) return { ...state.solution, branchAndBoundNodes, branchAndBoundBranches };
-
-    for (const groupId of violation.groupIds) {
-      const forbiddenEdges = new Set(state.forbiddenEdges);
-      forbiddenEdges.add(matchingEdgeKey(groupId, violation.activityId));
-      const signature = [...forbiddenEdges].sort().join('|');
-      if (!visited.has(signature)) {
-        visited.add(signature);
-        branchAndBoundBranches += 1;
-        queue.push(makeState(forbiddenEdges));
+    const participantCapacityViolation = participantViolation(
+      state.solution.matches,
+      groupsById,
+      activities,
+      lockedParticipantLoad,
+    );
+    if (participantCapacityViolation) {
+      for (const groupId of participantCapacityViolation.groupIds) {
+        if (state.forcedMatches.get(groupId) === participantCapacityViolation.activityId) continue;
+        const forbiddenEdges = new Set(state.forbiddenEdges);
+        forbiddenEdges.add(matchingEdgeKey(groupId, participantCapacityViolation.activityId));
+        addState(forbiddenEdges, state.forcedMatches);
       }
+      continue;
+    }
+
+    const minimumViolation = minimumGroupViolation(state.solution.matches, activities, lockedGroupLoad);
+    if (!minimumViolation) return { ...state.solution, branchAndBoundNodes, branchAndBoundBranches };
+
+    if ((lockedGroupLoad.get(minimumViolation.activityId) ?? 0) === 0) {
+      const forbiddenEdges = new Set(state.forbiddenEdges);
+      for (const groupId of groupIds) forbiddenEdges.add(matchingEdgeKey(groupId, minimumViolation.activityId));
+      addState(forbiddenEdges, state.forcedMatches);
+    }
+
+    const retainedMatches = new Map(state.forcedMatches);
+    for (const groupId of minimumViolation.groupIds) retainedMatches.set(groupId, minimumViolation.activityId);
+    for (const groupId of groupIds) {
+      if (state.solution.matches.get(groupId) === minimumViolation.activityId ||
+          !(candidatesByGroup.get(groupId) ?? []).includes(minimumViolation.activityId)) {
+        continue;
+      }
+      if (retainedMatches.has(groupId) && retainedMatches.get(groupId) !== minimumViolation.activityId) continue;
+      const forcedMatches = new Map(retainedMatches);
+      forcedMatches.set(groupId, minimumViolation.activityId);
+      addState(state.forbiddenEdges, forcedMatches);
     }
   }
 
   return { matches: new Map(), flow: 0, cost: 0, branchAndBoundNodes, branchAndBoundBranches };
+}
+
+function allocateActivityPrograms(
+  candidatesByGroup: ReadonlyMap<GroupId, readonly ActivityId[]>,
+  groupsById: ReadonlyMap<GroupId, CampGroup>,
+  activities: ReadonlyMap<ActivityId, EffectiveActivity>,
+  lockedProgramByActivity: ReadonlyMap<ActivityId, string>,
+  seed: number,
+  slotKey: string,
+): ReadonlyMap<ActivityId, string> {
+  const demandByProgram = new Map<string, number>();
+  const possibleProgramsByActivity = new Map<ActivityId, Set<string>>();
+  for (const [groupId, activityIds] of candidatesByGroup) {
+    const programId = groupsById.get(groupId)!.categoryId;
+    demandByProgram.set(programId, (demandByProgram.get(programId) ?? 0) + 1);
+    for (const activityId of activityIds) {
+      const programs = possibleProgramsByActivity.get(activityId) ?? new Set<string>();
+      programs.add(programId);
+      possibleProgramsByActivity.set(activityId, programs);
+    }
+  }
+
+  const allocation = new Map(lockedProgramByActivity);
+  const allocatedCapacity = (programId: string) => [...allocation]
+    .filter(([, allocatedProgram]) => allocatedProgram === programId)
+    .reduce((sum, [activityId]) => sum + activities.get(activityId)!.maxGroups, 0);
+  const unallocated = () => [...possibleProgramsByActivity.keys()].filter((activityId) => !allocation.has(activityId));
+  const programs = [...demandByProgram.keys()].sort();
+
+  for (const programId of programs) {
+    while (allocatedCapacity(programId) < (demandByProgram.get(programId) ?? 0)) {
+      const demand = demandByProgram.get(programId) ?? 0;
+      const candidate = unallocated()
+        .filter((activityId) =>
+          possibleProgramsByActivity.get(activityId)!.has(programId) &&
+          activities.get(activityId)!.minGroups <= demand,
+        )
+        .sort((left, right) =>
+          activities.get(right)!.maxGroups - activities.get(left)!.maxGroups ||
+          stableHash(seed, `${slotKey}\u0000${left}\u0000${programId}`) -
+            stableHash(seed, `${slotKey}\u0000${right}\u0000${programId}`),
+        )[0];
+      if (!candidate) break;
+      allocation.set(candidate, programId);
+    }
+  }
+
+  for (const activityId of unallocated().sort()) {
+    const possiblePrograms = [...possibleProgramsByActivity.get(activityId)!]
+      .filter((programId) => activities.get(activityId)!.minGroups <= (demandByProgram.get(programId) ?? 0))
+      .sort();
+    const selected = possiblePrograms.sort((left, right) => {
+      const allocatedToLeft = [...allocation.values()].filter((programId) => programId === left).length;
+      const allocatedToRight = [...allocation.values()].filter((programId) => programId === right).length;
+      const leftNeed = (demandByProgram.get(left) ?? 0) / (allocatedToLeft + 1);
+      const rightNeed = (demandByProgram.get(right) ?? 0) / (allocatedToRight + 1);
+      return rightNeed - leftNeed ||
+        stableHash(seed, `${slotKey}\u0000${activityId}\u0000${left}`) -
+          stableHash(seed, `${slotKey}\u0000${activityId}\u0000${right}`);
+    })[0];
+    if (selected) allocation.set(activityId, selected);
+  }
+  return allocation;
 }
 
 export function scheduleBlock(input: SchedulingInput): SchedulingResult {
@@ -338,6 +472,29 @@ export function scheduleBlock(input: SchedulingInput): SchedulingResult {
     );
   }
 
+  const lockedProgramsByActivity = new Map<ActivityId, Set<string>>();
+  for (const assignment of relevantLocked) {
+    const programId = groupsById.get(assignment.groupId)?.categoryId;
+    if (!programId) continue;
+    const programs = lockedProgramsByActivity.get(assignment.activityId) ?? new Set<string>();
+    programs.add(programId);
+    lockedProgramsByActivity.set(assignment.activityId, programs);
+  }
+  for (const [activityId, programs] of lockedProgramsByActivity) {
+    if (programs.size > 1) {
+      errors.push(diagnostic(
+        'INVALID_LOCKED_ASSIGNMENT',
+        'Locked assignments mix group programs in the same activity and block.',
+        { activityId, programIds: [...programs].sort() },
+      ));
+    }
+  }
+  const lockedProgramByActivity = new Map(
+    [...lockedProgramsByActivity].flatMap(([activityId, programs]) =>
+      programs.size === 1 ? [[activityId, [...programs][0]] as const] : [],
+    ),
+  );
+
   const lockedGroupLoad = new Map<ActivityId, number>();
   const lockedParticipantLoad = new Map<ActivityId, number>();
   for (const assignment of relevantLocked) {
@@ -414,6 +571,14 @@ export function scheduleBlock(input: SchedulingInput): SchedulingResult {
 
   const preUnassigned: UnassignedGroup[] = [];
   const candidatesByGroup = new Map<GroupId, ActivityId[]>();
+  const cycleByGroup = currentCycleByGroup(input.cycleSnapshots);
+  const sameDayActivityIdsByGroup = new Map<GroupId, Set<ActivityId>>();
+  for (const assignment of input.sameDayAssignments ?? []) {
+    if (assignment.date !== input.date) continue;
+    const activityIds = sameDayActivityIdsByGroup.get(assignment.groupId) ?? new Set<ActivityId>();
+    activityIds.add(assignment.activityId);
+    sameDayActivityIdsByGroup.set(assignment.groupId, activityIds);
+  }
   const activeCategoryIds = new Set(input.groupCategories.filter((category) => category.active).map((category) => category.id));
   const usableActivities = [...activities.values()].filter((entry) => entry.activity.active);
 
@@ -451,8 +616,13 @@ export function scheduleBlock(input: SchedulingInput): SchedulingResult {
     }
 
     let excludedForUnknownParticipants = false;
+    let excludedAsSameDayRepetition = false;
     const candidates = available
       .filter((entry) => {
+        if (sameDayActivityIdsByGroup.get(group.id)?.has(entry.activity.id)) {
+          excludedAsSameDayRepetition = true;
+          return false;
+        }
         if (entry.maxParticipants === undefined) return true;
         if (group.participantCount === undefined) {
           excludedForUnknownParticipants = true;
@@ -472,9 +642,15 @@ export function scheduleBlock(input: SchedulingInput): SchedulingResult {
     if (candidates.length === 0) {
       preUnassigned.push({
         groupId: group.id,
-        reasonCode: excludedForUnknownParticipants ? 'PARTICIPANT_COUNT_REQUIRED' : 'CAPACITY_EXHAUSTED',
+        reasonCode: excludedForUnknownParticipants
+          ? 'PARTICIPANT_COUNT_REQUIRED'
+          : excludedAsSameDayRepetition
+            ? 'NO_FEASIBLE_ASSIGNMENT'
+            : 'CAPACITY_EXHAUSTED',
         message: excludedForUnknownParticipants
           ? 'The group cannot be evaluated against participant capacity without participantCount.'
+          : excludedAsSameDayRepetition
+            ? 'No activity is feasible without repeating one already assigned to the group today.'
           : 'The group exceeds the remaining participant capacity of every eligible activity.',
       });
       continue;
@@ -483,14 +659,7 @@ export function scheduleBlock(input: SchedulingInput): SchedulingResult {
   }
 
   const schedulableGroupIds = [...candidatesByGroup.keys()];
-  const schedulableActivityIds = [...new Set([...candidatesByGroup.values()].flat())];
-  const activityCapacities = new Map<ActivityId, number>();
-  for (const activityId of schedulableActivityIds) {
-    const activity = activities.get(activityId)!;
-    activityCapacities.set(activityId, Math.max(0, activity.maxGroups - (lockedGroupLoad.get(activityId) ?? 0)));
-  }
 
-  const cycleByGroup = currentCycleByGroup(input.cycleSnapshots);
   const completedHistory = input.history.filter((assignment) => assignment.status === 'completed');
   const projectedHistory = input.projectedAssignments ?? [];
   const relevantHistory = [...completedHistory, ...projectedHistory];
@@ -530,6 +699,25 @@ export function scheduleBlock(input: SchedulingInput): SchedulingResult {
     return repeatCost + balanceCost + recentCost + fairnessCost + tieCost;
   };
 
+  const programByActivity = allocateActivityPrograms(
+    candidatesByGroup,
+    groupsById,
+    activities,
+    lockedProgramByActivity,
+    seed,
+    `${input.date}\u0000${input.timeBlock.id}`,
+  );
+  for (const [groupId, candidates] of candidatesByGroup) {
+    const programId = groupsById.get(groupId)!.categoryId;
+    candidatesByGroup.set(groupId, candidates.filter((activityId) => programByActivity.get(activityId) === programId));
+  }
+  const schedulableActivityIds = [...new Set([...candidatesByGroup.values()].flat())];
+  const activityCapacities = new Map<ActivityId, number>();
+  for (const activityId of schedulableActivityIds) {
+    const activity = activities.get(activityId)!;
+    activityCapacities.set(activityId, Math.max(0, activity.maxGroups - (lockedGroupLoad.get(activityId) ?? 0)));
+  }
+
   const solution = solveWithParticipantCapacity(
     schedulableGroupIds,
     schedulableActivityIds,
@@ -538,8 +726,52 @@ export function scheduleBlock(input: SchedulingInput): SchedulingResult {
     edgeCost,
     groupsById,
     activities,
+    lockedGroupLoad,
     lockedParticipantLoad,
   );
+
+  const generatedGroupLoad = new Map<ActivityId, number>();
+  for (const activityId of solution.matches.values()) {
+    generatedGroupLoad.set(activityId, (generatedGroupLoad.get(activityId) ?? 0) + 1);
+  }
+  const underfilledLockedActivities = [...lockedGroupLoad]
+    .filter(([activityId, lockedLoad]) =>
+      lockedLoad + (generatedGroupLoad.get(activityId) ?? 0) < activities.get(activityId)!.minGroups,
+    )
+    .map(([activityId]) => activityId);
+  if (underfilledLockedActivities.length > 0) {
+    errors.push(diagnostic(
+      'INVALID_LOCKED_ASSIGNMENT',
+      'Locked assignments cannot reach the activity minimum in this block.',
+      { activityIds: underfilledLockedActivities.sort() },
+    ));
+    const unassigned = activeGroups
+      .filter((group) => !lockedGroupIds.has(group.id))
+      .map<UnassignedGroup>((group) => ({
+        groupId: group.id,
+        reasonCode: 'INVALID_INPUT',
+        message: 'Scheduling was not completed because a locked activity cannot reach its minimum.',
+      }));
+    return {
+      status: 'invalid_input',
+      assignments: [...relevantLocked],
+      unassigned,
+      diagnostics: {
+        algorithmVersion: BLOCK_SCHEDULER_ALGORITHM_VERSION,
+        seed,
+        metrics: {
+          ...baseMetrics,
+          candidateCount: [...candidatesByGroup.values()].reduce((sum, candidates) => sum + candidates.length, 0),
+          assignedGroupCount: relevantLocked.length,
+          unassignedGroupCount: unassigned.length,
+          branchAndBoundNodes: solution.branchAndBoundNodes,
+          branchAndBoundBranches: solution.branchAndBoundBranches,
+        },
+        warnings,
+        errors,
+      },
+    };
+  }
 
   const generatedAssignments = [...solution.matches]
     .sort(([left], [right]) => left.localeCompare(right))

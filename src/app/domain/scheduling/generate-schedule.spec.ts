@@ -105,6 +105,10 @@ function expectMultiBlockInvariants(result: ScheduleGenerationResult, input: Sch
   const eligible = new Set(input.activityEligibility.map((item) => `${item.activityId}\u0000${item.groupCategoryId}`));
   const assignmentKeys = result.assignments.map((item) => `${item.date}\u0000${item.timeBlockId}\u0000${item.groupId}`);
   expect(new Set(assignmentKeys).size).toBe(assignmentKeys.length);
+  const dailyActivityKeys = result.assignments.map(
+    (item) => `${item.date}\u0000${item.groupId}\u0000${item.activityId}`,
+  );
+  expect(new Set(dailyActivityKeys).size).toBe(dailyActivityKeys.length);
 
   for (const blockResult of result.blocks) {
     const slotAssignments = result.assignments.filter(
@@ -216,12 +220,26 @@ describe('multi-block schedule generation', () => {
     const input = generationInput({
       blocks: [block('b1', 1), block('b2', 2)],
       groups: [group('g1'), group('g2'), group('g3'), group('g4')],
-      activities: [activity('kayak', { maxGroups: 2 })],
+      activities: [activity('kayak', { maxGroups: 2 }), activity('pool', { maxGroups: 2 })],
     });
     const result = generateSchedule(input);
 
-    expect(result.blocks.map((item) => item.result.assignments.length)).toEqual([2, 2]);
-    expect(result.assignments.length).toBe(4);
+    expect(result.blocks.map((item) => item.result.assignments.length)).toEqual([4, 4]);
+    expect(result.assignments.length).toBe(8);
+    expectMultiBlockInvariants(result, input);
+  });
+
+  it('never assigns the same activity to a group twice on the same day', () => {
+    const input = generationInput({
+      blocks: [block('b1', 1), block('b2', 2), block('b3', 3)],
+      groups: [group('g1'), group('g2')],
+      activities: [activity('a'), activity('b'), activity('c')],
+    });
+    const result = generateSchedule(input);
+
+    expect(new Set(assignmentsFor(result, 'g1')).size).toBe(3);
+    expect(new Set(assignmentsFor(result, 'g2')).size).toBe(3);
+    expect(result.unassigned).toEqual([]);
     expectMultiBlockInvariants(result, input);
   });
 
@@ -259,7 +277,8 @@ describe('multi-block schedule generation', () => {
   it('completes cycle 1 and opens cycle 2 with a fresh snapshot for the following block', () => {
     const activities = ['a', 'b', 'c'].map((id) => activity(id));
     const input = generationInput({
-      blocks: [block('b1', 1), block('b2', 2), block('b3', 3), block('b4', 4)],
+      dates: ['2026-08-10', '2026-08-11'],
+      blocks: [block('b1', 1), block('b2', 2)],
       groups: [group('g1')],
       activities,
       cycles: [cycle('g1', ['a', 'b', 'c'])],
@@ -317,6 +336,27 @@ describe('multi-block schedule generation', () => {
     expect(assignmentsFor(result, 'g1')).toEqual(['repeat']);
     expect(result.metrics.global.prematureRepetitionCount).toBe(1);
     expect(result.metrics.global.coveragePercentage).toBe(100);
+  });
+
+  it('schedules a special event without adding it to or advancing the normal cycle', () => {
+    const normal = activity('normal');
+    const special = activity('special', { countsTowardCycle: false });
+    const input = generationInput({
+      blocks: [block('all-day', 1)],
+      groups: [group('g1')],
+      activities: [normal, special],
+      cycles: [cycle('g1', ['normal'])],
+      unavailableActivities: [{ activityId: 'normal', date: '2026-08-10', timeBlockId: 'all-day' }],
+    });
+    const result = generateSchedule(input);
+    const projected = result.projectedCycles[0].cycles[0].snapshot;
+
+    expect(assignmentsFor(result, 'g1')).toEqual(['special']);
+    expect(projected.requirements).toEqual([
+      jasmine.objectContaining({ activityId: 'normal', status: 'pending' }),
+    ]);
+    expect(projected.cycle.status).toBe('active');
+    expect(result.metrics.global.prematureRepetitionCount).toBe(0);
   });
 
   it('is deterministic and does not mutate its input', () => {

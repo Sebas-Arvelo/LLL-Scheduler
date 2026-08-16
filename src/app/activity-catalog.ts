@@ -3,7 +3,7 @@ import type { Activity } from './domain';
 export const DEMO_ACTIVITIES: readonly Activity[] = [
   {
     id: 'futbol-5',
-    name: 'Deporte: Fútbol 5',
+    name: 'Fútbol 5',
     displayCategory: 'Deporte',
     description: 'Fomentar el trabajo en equipo, la coordinación y la actividad física mediante partidos de fútbol en formato reducido.',
     maxGroups: 36,
@@ -11,7 +11,7 @@ export const DEMO_ACTIVITIES: readonly Activity[] = [
   },
   {
     id: 'futbol-campo',
-    name: 'Deporte: Fútbol Campo',
+    name: 'Fútbol Campo',
     displayCategory: 'Deporte',
     description: 'Incentivar la cooperación, estrategia y resistencia física a través del fútbol en cancha completa.',
     maxGroups: 36,
@@ -19,7 +19,7 @@ export const DEMO_ACTIVITIES: readonly Activity[] = [
   },
   {
     id: 'kickingball',
-    name: 'Deporte: Kickingball',
+    name: 'Kickingball',
     displayCategory: 'Deporte',
     description: 'Desarrollar habilidades motrices y el trabajo colaborativo mediante un deporte recreativo.',
     maxGroups: 36,
@@ -27,7 +27,7 @@ export const DEMO_ACTIVITIES: readonly Activity[] = [
   },
   {
     id: 'ultimate',
-    name: 'Deporte: Ultimate',
+    name: 'Ultimate',
     displayCategory: 'Deporte',
     description: 'Estimular la actividad física y el juego limpio mediante la práctica de Ultimate.',
     maxGroups: 36,
@@ -35,7 +35,7 @@ export const DEMO_ACTIVITIES: readonly Activity[] = [
   },
   {
     id: 'voleybol',
-    name: 'Deporte: Voleybol',
+    name: 'Voleybol',
     displayCategory: 'Deporte',
     description: 'Favorecer el trabajo en equipo y la coordinación mediante partidos de voleibol.',
     maxGroups: 36,
@@ -43,7 +43,7 @@ export const DEMO_ACTIVITIES: readonly Activity[] = [
   },
   {
     id: 'arcillita',
-    name: 'Excursión: Arcillita',
+    name: 'Arcillita',
     displayCategory: 'Excursión',
     description: 'Explorar el entorno natural promoviendo el aprendizaje y la observación.',
     maxGroups: 36,
@@ -51,7 +51,7 @@ export const DEMO_ACTIVITIES: readonly Activity[] = [
   },
   {
     id: 'cascaditas',
-    name: 'Excursión: Cascaditas',
+    name: 'Cascaditas',
     displayCategory: 'Excursión',
     description: 'Disfrutar de un recorrido natural fomentando la aventura y el cuidado del ambiente.',
     maxGroups: 36,
@@ -59,7 +59,7 @@ export const DEMO_ACTIVITIES: readonly Activity[] = [
   },
   {
     id: 'periodico',
-    name: 'Manualidades: Periódico',
+    name: 'Periódico',
     displayCategory: 'Manualidades',
     description: 'Incentivar la creatividad reutilizando materiales reciclables.',
     maxGroups: 36,
@@ -67,7 +67,7 @@ export const DEMO_ACTIVITIES: readonly Activity[] = [
   },
   {
     id: 'proyecto',
-    name: 'Manualidades: Proyecto',
+    name: 'Proyecto',
     displayCategory: 'Manualidades',
     description: 'Elaborar una creación manual fortaleciendo la creatividad y la planificación.',
     maxGroups: 36,
@@ -75,7 +75,7 @@ export const DEMO_ACTIVITIES: readonly Activity[] = [
   },
   {
     id: 'pulseritas',
-    name: 'Manualidades: Pulseritas',
+    name: 'Pulseritas',
     displayCategory: 'Manualidades',
     description: 'Desarrollar la motricidad fina mediante la elaboración de pulseras.',
     maxGroups: 36,
@@ -83,7 +83,7 @@ export const DEMO_ACTIVITIES: readonly Activity[] = [
   },
   {
     id: 'tablita',
-    name: 'Manualidades: Tablita',
+    name: 'Tablita',
     displayCategory: 'Manualidades',
     description: 'Elaborar una manualidad personalizada fortaleciendo habilidades manuales.',
     maxGroups: 36,
@@ -99,7 +99,7 @@ export const DEMO_ACTIVITIES: readonly Activity[] = [
   },
   {
     id: 'hidroslide',
-    name: 'Piscina: Hidroslide',
+    name: 'Hidroslide',
     displayCategory: 'Piscina',
     description: 'Disfrutar de actividades acuáticas de forma segura y recreativa.',
     maxGroups: 36,
@@ -107,7 +107,7 @@ export const DEMO_ACTIVITIES: readonly Activity[] = [
   },
   {
     id: 'piscina',
-    name: 'Piscina: Piscina',
+    name: 'Piscina',
     displayCategory: 'Piscina',
     description: 'Incentivar la recreación acuática fortaleciendo habilidades motrices.',
     maxGroups: 36,
@@ -115,7 +115,7 @@ export const DEMO_ACTIVITIES: readonly Activity[] = [
   },
   {
     id: 'botes',
-    name: 'Salida: Botes',
+    name: 'Botes',
     displayCategory: 'Salida',
     description: 'Vivir una experiencia recreativa fortaleciendo la cooperación y el contacto con la naturaleza.',
     maxGroups: 36,
@@ -123,7 +123,7 @@ export const DEMO_ACTIVITIES: readonly Activity[] = [
   },
   {
     id: 'caballos',
-    name: 'Salida: Caballos',
+    name: 'Caballos',
     displayCategory: 'Salida',
     description: 'Acercar a los participantes al cuidado y respeto por los animales mediante la equitación recreativa.',
     maxGroups: 3,
@@ -131,7 +131,7 @@ export const DEMO_ACTIVITIES: readonly Activity[] = [
   },
   {
     id: 'ordeno',
-    name: 'Salida: Ordeño',
+    name: 'Ordeño',
     displayCategory: 'Salida',
     description: 'Conocer el proceso de ordeño promoviendo el aprendizaje vivencial del entorno rural.',
     maxGroups: 36,
@@ -139,7 +139,7 @@ export const DEMO_ACTIVITIES: readonly Activity[] = [
   },
   {
     id: 'paseo-bici',
-    name: 'Salida: Paseo en Bici',
+    name: 'Paseo en Bici',
     displayCategory: 'Salida',
     description: 'Promover la actividad física y la exploración del entorno mediante un recorrido en bicicleta.',
     maxGroups: 36,
