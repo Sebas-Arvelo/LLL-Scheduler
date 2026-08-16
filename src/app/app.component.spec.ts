@@ -94,7 +94,7 @@ describe('AppComponent real scheduling integration', () => {
     component.generate();
 
     expect(component.totalGroups).toBe(36);
-    expect(component.generationResult?.diagnostics.engineVersion).toBe('multi-block-projection-v1');
+    expect(component.generationResult?.diagnostics.engineVersion).toBe('multi-block-sessions-v2');
     expect(component.scheduleGrid.rows.length).toBe(36);
     expect(component.scheduleGrid.columns.length).toBe(5);
     expect(component.generationResult?.assignments.length).toBe(180);
@@ -160,7 +160,7 @@ describe('AppComponent real scheduling integration', () => {
 
     expect(activity.minGroups).toBe(3);
     expect(component.uiErrors).toContain(
-      'Las actividades activas necesitan nombre y un mínimo/máximo de grupos válido.',
+      'Las actividades activas necesitan nombre, duración de 1 a 3 bloques y capacidades válidas.',
     );
     expect(component.generationResult).toBeUndefined();
   });
@@ -346,12 +346,16 @@ describe('AppComponent real scheduling integration', () => {
         status: 'active', startedAt: '2026-08-15T10:00:00Z', requirements: [],
       }],
     };
+    component.executionStateStatus = 'updated';
+    component.executionMessage = 'Progreso inicializado.';
 
     component.prepareNextDay();
 
     expect(component.planningDate).not.toBe(originalDate);
     expect(component.executionState.cycles.map((cycle) => cycle.id)).toEqual(['cycle-real-1']);
     expect(component.dayMode).toBe('regular');
+    expect(component.executionStateStatus).toBe('idle');
+    expect(component.executionMessage).toBe('');
   });
 
   it('adds the following generated day without replacing the previous day', () => {

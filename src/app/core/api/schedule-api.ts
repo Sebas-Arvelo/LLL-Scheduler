@@ -30,6 +30,9 @@ export interface CreateScheduleRequest {
     activityId: string;
     date: string;
     timeBlockId: string;
+    sessionId?: string;
+    sessionBlockIndex?: number;
+    sessionBlockCount?: number;
     cycleId?: string;
     source: 'automatic' | 'manual' | 'imported';
     status: 'planned';
@@ -120,6 +123,9 @@ export function buildCreateScheduleRequest(input: SchedulePersistenceInput): Cre
       activityId: assignment.activityId,
       date: assignment.date,
       timeBlockId: assignment.timeBlockId,
+      ...(assignment.sessionId ? { sessionId: assignment.sessionId } : {}),
+      ...(assignment.sessionBlockIndex !== undefined ? { sessionBlockIndex: assignment.sessionBlockIndex } : {}),
+      ...(assignment.sessionBlockCount !== undefined ? { sessionBlockCount: assignment.sessionBlockCount } : {}),
       ...(assignment.cycleId ? { cycleId: assignment.cycleId } : {}),
       source: assignment.source,
       status: 'planned' as const,

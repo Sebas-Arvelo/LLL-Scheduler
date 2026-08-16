@@ -22,6 +22,9 @@ export interface Assignment {
   activityId: ActivityId;
   date: LocalDate;
   timeBlockId: TimeBlockId;
+  sessionId?: string;
+  sessionBlockIndex?: number;
+  sessionBlockCount?: number;
   cycleId?: CycleId;
   source: AssignmentSource;
   status: AssignmentStatus;
@@ -74,6 +77,8 @@ export interface SchedulingInput {
   projectedAssignments?: readonly Assignment[];
   /** Earlier or reserved assignments that cannot be duplicated by the group on the same day. */
   sameDayAssignments?: readonly Assignment[];
+  /** Activity starts forbidden in this block; locked continuations remain valid. */
+  forbiddenActivityStarts?: readonly { groupId: GroupId; activityId: ActivityId }[];
   lockedAssignments: readonly Assignment[];
   hardConstraints: SchedulingHardConstraints;
   preferences?: SchedulingPreferences;

@@ -317,7 +317,7 @@ input:focus {
 
 .activity-main {
   display: grid;
-  grid-template-columns: 76px 120px minmax(220px, 1.4fr) minmax(120px, 0.7fr) 105px 110px 150px;
+  grid-template-columns: 76px 120px minmax(220px, 1.4fr) minmax(120px, 0.7fr) 105px 110px 150px 130px;
   align-items: end;
 }
 
@@ -525,6 +525,12 @@ input:focus {
   background: #f3f7f4;
   font-size: 0.72rem;
   font-weight: 800;
+}
+
+.session-segment {
+  margin-top: 4px;
+  color: #52705a;
+  font-weight: 700;
 }
 
 .status-badge[data-status='completed'] {

@@ -10,6 +10,7 @@ export type DomainValidationCode =
   | 'INVALID_MIN_GROUPS'
   | 'INVALID_MAX_GROUPS'
   | 'INVALID_MAX_PARTICIPANTS'
+  | 'INVALID_ACTIVITY_DURATION'
   | 'INVALID_PARTICIPANT_COUNT'
   | 'INVALID_TIME_BLOCK_ORDER'
   | 'INVALID_TIME'
@@ -95,6 +96,17 @@ export function validateActivity(activity: Activity): DomainValidationIssue[] {
       code: 'INVALID_MAX_PARTICIPANTS',
       path: 'maxParticipants',
       message: 'maxParticipants must be an integer greater than or equal to 1.',
+    });
+  }
+
+  if (
+    activity.durationBlocks !== undefined &&
+    (!Number.isInteger(activity.durationBlocks) || activity.durationBlocks < 1 || activity.durationBlocks > 3)
+  ) {
+    issues.push({
+      code: 'INVALID_ACTIVITY_DURATION',
+      path: 'durationBlocks',
+      message: 'durationBlocks must be an integer between 1 and 3.',
     });
   }
 

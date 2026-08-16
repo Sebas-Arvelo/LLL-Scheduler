@@ -8,6 +8,8 @@ export interface Activity {
   maxGroups: number;
   maxParticipants?: number;
   countsTowardCycle?: boolean;
+  /** Number of consecutive blocks occupied by one activity session. Defaults to 1. */
+  durationBlocks?: number;
   displayCategory?: string;
   description?: string;
 }

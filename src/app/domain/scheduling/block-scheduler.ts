@@ -361,6 +361,14 @@ function allocateActivityPrograms(
       .filter((programId) => activities.get(activityId)!.minGroups <= (demandByProgram.get(programId) ?? 0))
       .sort();
     const selected = possiblePrograms.sort((left, right) => {
+      const uncoveredGroups = (programId: string) => [...candidatesByGroup]
+        .filter(([groupId, candidateIds]) =>
+          groupsById.get(groupId)!.categoryId === programId &&
+          candidateIds.includes(activityId) &&
+          !candidateIds.some((candidateId) => allocation.get(candidateId) === programId),
+        ).length;
+      const uncoveredDifference = uncoveredGroups(right) - uncoveredGroups(left);
+      if (uncoveredDifference !== 0) return uncoveredDifference;
       const allocatedToLeft = [...allocation.values()].filter((programId) => programId === left).length;
       const allocatedToRight = [...allocation.values()].filter((programId) => programId === right).length;
       const leftNeed = (demandByProgram.get(left) ?? 0) / (allocatedToLeft + 1);
@@ -579,6 +587,9 @@ export function scheduleBlock(input: SchedulingInput): SchedulingResult {
     activityIds.add(assignment.activityId);
     sameDayActivityIdsByGroup.set(assignment.groupId, activityIds);
   }
+  const forbiddenStarts = new Set(
+    (input.forbiddenActivityStarts ?? []).map((entry) => matchingEdgeKey(entry.groupId, entry.activityId)),
+  );
   const activeCategoryIds = new Set(input.groupCategories.filter((category) => category.active).map((category) => category.id));
   const usableActivities = [...activities.values()].filter((entry) => entry.activity.active);
 
@@ -619,6 +630,7 @@ export function scheduleBlock(input: SchedulingInput): SchedulingResult {
     let excludedAsSameDayRepetition = false;
     const candidates = available
       .filter((entry) => {
+        if (forbiddenStarts.has(matchingEdgeKey(group.id, entry.activity.id))) return false;
         if (sameDayActivityIdsByGroup.get(group.id)?.has(entry.activity.id)) {
           excludedAsSameDayRepetition = true;
           return false;

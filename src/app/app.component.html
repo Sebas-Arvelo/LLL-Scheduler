@@ -262,6 +262,16 @@
               (ngModelChange)="setMaxParticipants(activity, $event)"
             />
           </label>
+          <label class="compact-field capacity-field">
+            <span>Duración (bloques)</span>
+            <input
+              type="number"
+              min="1"
+              max="3"
+              [ngModel]="activity.durationBlocks ?? 1"
+              (ngModelChange)="setActivityDuration(activity, $event)"
+            />
+          </label>
         </div>
 
         <p class="activity-description" *ngIf="activity.description">{{ activity.description }}</p>
@@ -392,6 +402,9 @@
                     [class.unassigned-cell]="cell.unassignedReason"
                   >
                     <span *ngIf="cell.activityName; else missingAssignment">{{ cell.activityName }}</span>
+                    <small class="session-segment" *ngIf="cell.assignment?.sessionBlockCount as blockCount">
+                      Bloque {{ (cell.assignment?.sessionBlockIndex ?? 0) + 1 }} de {{ blockCount }} · misma sesión
+                    </small>
                     <ng-container *ngIf="progressForCell(row.group.id, cell) as progress">
                       <span class="status-badge" [attr.data-status]="progress.status">
                         {{ progressStatusLabel(progress.status) }}

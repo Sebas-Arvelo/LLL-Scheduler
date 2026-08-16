@@ -118,6 +118,7 @@ export const DEMO_ACTIVITIES: readonly Activity[] = [
     name: 'Botes',
     displayCategory: 'Salida',
     description: 'Vivir una experiencia recreativa fortaleciendo la cooperación y el contacto con la naturaleza.',
+    durationBlocks: 2,
     maxGroups: 36,
     active: true,
   },

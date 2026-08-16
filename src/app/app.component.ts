@@ -528,6 +528,8 @@ export class AppComponent implements OnInit, OnDestroy {
     for (const block of this.timeBlocks) block.active = true;
     this.dailyUnavailableActivityIds = [];
     this.activitySlotView = undefined;
+    this.executionStateStatus = 'idle';
+    this.executionMessage = '';
     this.scheduleStale = true;
   }
 
@@ -538,6 +540,7 @@ export class AppComponent implements OnInit, OnDestroy {
       displayCategory: 'Sin tipo',
       minGroups: 1,
       maxGroups: Math.max(this.totalGroups, 1),
+      durationBlocks: 1,
       active: true,
     };
 
@@ -570,6 +573,11 @@ export class AppComponent implements OnInit, OnDestroy {
 
   setMinGroups(activity: Activity, value: number): void {
     activity.minGroups = Number(value);
+    this.markScheduleStale();
+  }
+
+  setActivityDuration(activity: Activity, value: number): void {
+    activity.durationBlocks = Number(value);
     this.markScheduleStale();
   }
 
@@ -642,7 +650,12 @@ export class AppComponent implements OnInit, OnDestroy {
         : this.realCycleSnapshots(),
       history: [
         ...this.realCompletedHistory(),
-        ...(previousResult?.assignments.map((assignment) => ({ ...assignment, status: 'completed' as const })) ?? []),
+        ...(previousResult?.assignments
+          .filter((assignment) =>
+            assignment.sessionBlockCount === undefined ||
+            assignment.sessionBlockIndex === assignment.sessionBlockCount - 1,
+          )
+          .map((assignment) => ({ ...assignment, status: 'completed' as const })) ?? []),
       ],
       hardConstraints: dailyConfiguration.hardConstraints,
       seed: this.seed,
@@ -1062,11 +1075,14 @@ export class AppComponent implements OnInit, OnDestroy {
           !Number.isInteger(activity.maxGroups) ||
           activity.maxGroups < 1 ||
           (activity.minGroups ?? 1) > activity.maxGroups ||
+          !Number.isInteger(activity.durationBlocks ?? 1) ||
+          (activity.durationBlocks ?? 1) < 1 ||
+          (activity.durationBlocks ?? 1) > 3 ||
           (activity.maxParticipants !== undefined &&
             (!Number.isInteger(activity.maxParticipants) || activity.maxParticipants < 1)),
       )
     ) {
-      errors.push('Las actividades activas necesitan nombre y un mínimo/máximo de grupos válido.');
+      errors.push('Las actividades activas necesitan nombre, duración de 1 a 3 bloques y capacidades válidas.');
     }
     if (
       activeActivities.some((activity) => activity.maxParticipants !== undefined) &&

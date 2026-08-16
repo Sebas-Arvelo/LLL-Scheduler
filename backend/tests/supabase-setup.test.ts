@@ -26,3 +26,24 @@ test('Supabase execution setup is idempotent and keeps one progress row per plan
   assert.match(sql, /status in \('planned', 'completed', 'cancelled'\)/i);
   assert.match(sql, /coalesce\(\(activity->>'countsTowardCycle'\)::boolean, true\)/i);
 });
+
+test('Supabase scopes activity cycles to the saved schedule', async () => {
+  const sql = await readFile(resolve(process.cwd(), 'supabase/setup.sql'), 'utf8');
+  assert.match(sql, /activity_cycles[\s\S]*saved_schedule_id uuid/i);
+  assert.match(sql, /foreign key \(user_id, saved_schedule_id\)[\s\S]*saved_schedules\(user_id, id\)/i);
+  assert.match(sql, /activity_cycles_one_active_group_idx[\s\S]*user_id, saved_schedule_id, group_id/i);
+  assert.match(sql, /where user_id = v_user_id and saved_schedule_id = p_saved_schedule_id/i);
+  assert.match(sql, /insert into public\.activity_cycles \(user_id, saved_schedule_id, group_id, cycle_number\)/i);
+  assert.match(sql, /later\.saved_schedule_id = v_cycle\.saved_schedule_id/i);
+});
+
+test('Supabase persists and updates multi-block sessions atomically', async () => {
+  const sql = await readFile(resolve(process.cwd(), 'supabase/setup.sql'), 'utf8');
+  assert.match(sql, /session_id text/i);
+  assert.match(sql, /session_block_index integer/i);
+  assert.match(sql, /session_block_count integer/i);
+  assert.match(sql, /assignment_progress_session_consistency/i);
+  assert.match(sql, /assignment->>'sessionId'/i);
+  assert.match(sql, /v_progress\.session_id is not null and session_id = v_progress\.session_id/i);
+  assert.match(sql, /cycle_id = case when id = p_progress_id then v_cycle\.id else null end/i);
+});

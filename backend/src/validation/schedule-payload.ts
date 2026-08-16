@@ -132,6 +132,9 @@ function parseSnapshot(value: unknown): ConfigurationSnapshot {
       ...(item['countsTowardCycle'] !== undefined
         ? { countsTowardCycle: boolean(item['countsTowardCycle'], `configurationSnapshot.activities[${index}].countsTowardCycle`) }
         : {}),
+      ...(item['durationBlocks'] !== undefined
+        ? { durationBlocks: integer(item['durationBlocks'], `configurationSnapshot.activities[${index}].durationBlocks`, 1, 3) }
+        : {}),
       ...(text(item['displayCategory'], `configurationSnapshot.activities[${index}].displayCategory`, false)
         ? { displayCategory: text(item['displayCategory'], `configurationSnapshot.activities[${index}].displayCategory`, false) }
         : {}),
@@ -229,11 +232,27 @@ export function validateCreateScheduleRequest(value: unknown): CreateScheduleReq
     if (item['source'] !== 'automatic' && item['source'] !== 'manual' && item['source'] !== 'imported') {
       throw new BadRequestError(`assignments[${index}].source is invalid.`);
     }
+    const sessionId = text(item['sessionId'], `assignments[${index}].sessionId`, false);
+    const sessionBlockCount = item['sessionBlockCount'] === undefined
+      ? undefined
+      : integer(item['sessionBlockCount'], `assignments[${index}].sessionBlockCount`, 2, 3);
+    const sessionBlockIndex = item['sessionBlockIndex'] === undefined
+      ? undefined
+      : integer(item['sessionBlockIndex'], `assignments[${index}].sessionBlockIndex`, 0, 2);
+    if (!!sessionId !== (sessionBlockCount !== undefined && sessionBlockIndex !== undefined)) {
+      throw new BadRequestError(`Assignment ${index} has incomplete session metadata.`);
+    }
+    if (sessionBlockIndex !== undefined && sessionBlockCount !== undefined && sessionBlockIndex >= sessionBlockCount) {
+      throw new BadRequestError(`Assignment ${index} has an invalid session block index.`);
+    }
     return {
       groupId,
       activityId,
       date,
       timeBlockId,
+      ...(sessionId ? { sessionId } : {}),
+      ...(sessionBlockIndex !== undefined ? { sessionBlockIndex } : {}),
+      ...(sessionBlockCount !== undefined ? { sessionBlockCount } : {}),
       ...(item['cycleId'] !== undefined ? { cycleId: identifier(item['cycleId'], `assignments[${index}].cycleId`) } : {}),
       source: item['source'],
       status: 'planned',

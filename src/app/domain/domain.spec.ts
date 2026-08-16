@@ -128,6 +128,18 @@ describe('scheduling domain contracts', () => {
     expect(issues.map((issue) => issue.code)).toEqual(['INVALID_MIN_GROUPS']);
   });
 
+  it('rejects activity durations outside one to three blocks', () => {
+    const issues = validateActivity({
+      id: 'invalid-duration',
+      name: 'Invalid duration',
+      active: true,
+      maxGroups: 1,
+      durationBlocks: 4,
+    });
+
+    expect(issues.map((issue) => issue.code)).toEqual(['INVALID_ACTIVITY_DURATION']);
+  });
+
   it('validates participant counts, block order and season date ranges', () => {
     const groupIssues = validateCampGroup({
       id: 'sabana-1',

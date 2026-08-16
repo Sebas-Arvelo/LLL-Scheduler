@@ -48,11 +48,42 @@ describe('real assignment history and cycles', () => {
     expect(summary.completedPercentage).toBeCloseTo(100 / 3, 10);
   });
 
+  it('counts a multi-block session once in the progress summary', () => {
+    const first = { ...progress('planned'), sessionId: 'session-1', sessionBlockIndex: 0, sessionBlockCount: 2 };
+    const second = { ...first, id: 'progress-2', timeBlockId: 'M2', sessionBlockIndex: 1 };
+    expect(summarizeProgress([first, second])).toEqual({
+      planned: 1,
+      completed: 0,
+      cancelled: 0,
+      completedPercentage: 0,
+    });
+  });
+
   it('completes a requirement and closes the cycle when all requirements are resolved', () => {
     const transitioned = transitionProgress(state(), 'progress-1', 'completed', now);
     expect(transitioned.cycles[0].requirements[0].status).toBe('completed');
     expect(transitioned.cycles[0].status).toBe('completed');
     expect(transitioned.progress[0].cycleId).toBe('cycle-1');
+  });
+
+  it('updates every block of a multi-block session atomically and advances the cycle once', () => {
+    const initial = state();
+    initial.progress = [
+      { ...initial.progress[0], sessionId: 'boats-session', sessionBlockIndex: 0, sessionBlockCount: 2 },
+      {
+        ...initial.progress[0], id: 'progress-2', timeBlockId: 'M2',
+        sessionId: 'boats-session', sessionBlockIndex: 1, sessionBlockCount: 2,
+      },
+    ];
+
+    const completed = transitionProgress(initial, 'progress-1', 'completed', now);
+    expect(completed.progress.map((item) => item.status)).toEqual(['completed', 'completed']);
+    expect(completed.progress.filter((item) => item.cycleId === 'cycle-1').length).toBe(1);
+    expect(completed.cycles[0].requirements[0].status).toBe('completed');
+
+    const reverted = transitionProgress(completed, 'progress-2', 'planned', '2026-08-15T13:00:00Z');
+    expect(reverted.progress.map((item) => item.status)).toEqual(['planned', 'planned']);
+    expect(reverted.cycles[0].requirements[0].status).toBe('pending');
   });
 
   it('uses exempted requirements to close a cycle', () => {

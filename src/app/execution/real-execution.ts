@@ -10,6 +10,9 @@ export interface AssignmentProgress {
   activityId: string;
   date: string;
   timeBlockId: string;
+  sessionId?: string;
+  sessionBlockIndex?: number;
+  sessionBlockCount?: number;
   status: AssignmentProgressStatus;
   cycleId?: string;
   completedAt?: string;
@@ -65,11 +68,12 @@ export function assignmentProgressKey(parts: {
 }
 
 export function summarizeProgress(progress: readonly AssignmentProgress[]): ProgressSummary {
-  const summary = progress.reduce(
+  const sessions = [...new Map(progress.map((item) => [item.sessionId ?? item.id, item])).values()];
+  const summary = sessions.reduce(
     (current, item) => ({ ...current, [item.status]: current[item.status] + 1 }),
     { planned: 0, completed: 0, cancelled: 0 },
   );
-  const total = progress.length;
+  const total = sessions.length;
   return {
     ...summary,
     completedPercentage: total === 0 ? 0 : (summary.completed / total) * 100,
@@ -79,7 +83,10 @@ export function summarizeProgress(progress: readonly AssignmentProgress[]): Prog
 /** Only observed completions become input history for a future scheduler run. */
 export function deriveRealHistory(progress: readonly AssignmentProgress[]): readonly RealHistoryEntry[] {
   return progress
-    .filter((item) => item.status === 'completed' && !!item.completedAt)
+    .filter((item) =>
+      item.status === 'completed' && !!item.completedAt &&
+      (item.sessionBlockCount === undefined || item.sessionBlockIndex === item.sessionBlockCount - 1),
+    )
     .map((item) => ({
       progressId: item.id,
       savedScheduleId: item.savedScheduleId,
@@ -139,7 +146,11 @@ export function transitionProgress(
   if (target.status === status) return structuredClone(state);
 
   let cycles = structuredClone(state.cycles) as RealActivityCycle[];
-  let cycleId = target.cycleId;
+  const belongsToTargetSession = (item: AssignmentProgress) =>
+    target.sessionId ? item.savedScheduleId === target.savedScheduleId && item.sessionId === target.sessionId : item.id === target.id;
+  let cycleId = target.cycleId ?? (target.sessionId
+    ? state.progress.find((item) => belongsToTargetSession(item) && !!item.cycleId)?.cycleId
+    : undefined);
 
   if (status === 'completed') {
     const cycle = cycles.find((item) => item.groupId === target.groupId && item.status === 'active');
@@ -159,7 +170,7 @@ export function transitionProgress(
     if (cycle) {
       const hasAnotherCompletion = state.progress.some(
         (item) =>
-          item.id !== target.id &&
+          !belongsToTargetSession(item) &&
           item.status === 'completed' &&
           item.cycleId === cycleId &&
           item.activityId === target.activityId,
@@ -179,10 +190,10 @@ export function transitionProgress(
   }
 
   return {
-    progress: state.progress.map((item) => item.id === progressId ? {
+    progress: state.progress.map((item) => belongsToTargetSession(item) ? {
       ...item,
       status,
-      ...(cycleId ? { cycleId } : { cycleId: undefined }),
+      ...(cycleId && item.id === progressId ? { cycleId } : { cycleId: undefined }),
       ...(status === 'completed' ? { completedAt: occurredAt } : { completedAt: undefined }),
       updatedAt: occurredAt,
     } : { ...item }),

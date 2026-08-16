@@ -25,6 +25,7 @@ export interface ConfigurationSnapshot {
     maxGroups: number;
     maxParticipants?: number;
     countsTowardCycle?: boolean;
+    durationBlocks?: number;
     displayCategory?: string;
     description?: string;
   }[];
@@ -45,6 +46,9 @@ export interface CreateScheduleAssignment {
   activityId: string;
   date: string;
   timeBlockId: string;
+  sessionId?: string;
+  sessionBlockIndex?: number;
+  sessionBlockCount?: number;
   cycleId?: string;
   source: PersistedAssignmentSource;
   status: 'planned';

@@ -67,6 +67,7 @@ using (user_id = (select auth.uid()));
 create table if not exists public.activity_cycles (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
+  saved_schedule_id uuid,
   group_id text not null,
   cycle_number integer not null check (cycle_number > 0),
   status text not null default 'active' check (status in ('active', 'completed')),
@@ -74,19 +75,45 @@ create table if not exists public.activity_cycles (
   completed_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (user_id, group_id, cycle_number),
+  constraint activity_cycles_owned_schedule foreign key (user_id, saved_schedule_id)
+    references public.saved_schedules(user_id, id) on delete cascade,
   constraint activity_cycles_completion_consistency check (
     (status = 'active' and completed_at is null)
     or (status = 'completed' and completed_at is not null)
   )
 );
 
+alter table public.activity_cycles
+  add column if not exists saved_schedule_id uuid;
+alter table public.activity_cycles
+  drop constraint if exists activity_cycles_user_id_group_id_cycle_number_key;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'activity_cycles_owned_schedule'
+      and conrelid = 'public.activity_cycles'::regclass
+  ) then
+    alter table public.activity_cycles
+      add constraint activity_cycles_owned_schedule
+      foreign key (user_id, saved_schedule_id)
+      references public.saved_schedules(user_id, id) on delete cascade;
+  end if;
+end;
+$$;
+
+drop index if exists public.activity_cycles_one_active_group_idx;
 create unique index if not exists activity_cycles_one_active_group_idx
-  on public.activity_cycles (user_id, group_id) where status = 'active';
+  on public.activity_cycles (user_id, saved_schedule_id, group_id)
+  where status = 'active' and saved_schedule_id is not null;
+create unique index if not exists activity_cycles_schedule_group_number_idx
+  on public.activity_cycles (user_id, saved_schedule_id, group_id, cycle_number)
+  where saved_schedule_id is not null;
 create unique index if not exists activity_cycles_user_id_idx
   on public.activity_cycles (user_id, id);
-create index if not exists activity_cycles_user_group_idx
-  on public.activity_cycles (user_id, group_id, cycle_number desc);
+drop index if exists public.activity_cycles_user_group_idx;
+create index if not exists activity_cycles_user_schedule_group_idx
+  on public.activity_cycles (user_id, saved_schedule_id, group_id, cycle_number desc);
 
 create table if not exists public.cycle_requirements (
   id uuid primary key default gen_random_uuid(),
@@ -112,6 +139,9 @@ create table if not exists public.assignment_progress (
   activity_id text not null,
   date date not null,
   time_block_id text not null,
+  session_id text,
+  session_block_index integer,
+  session_block_count integer,
   status text not null default 'planned' check (status in ('planned', 'completed', 'cancelled')),
   cycle_id uuid,
   completed_at timestamptz,
@@ -122,10 +152,25 @@ create table if not exists public.assignment_progress (
     (status = 'completed' and completed_at is not null)
     or (status <> 'completed' and completed_at is null and cycle_id is null)
   ),
+  constraint assignment_progress_session_consistency check (
+    (session_id is null and session_block_index is null and session_block_count is null)
+    or (session_id is not null and session_block_index between 0 and session_block_count - 1
+      and session_block_count between 2 and 3)
+  ),
   constraint assignment_progress_owned_schedule foreign key (user_id, saved_schedule_id)
     references public.saved_schedules(user_id, id) on delete cascade,
   constraint assignment_progress_owned_cycle foreign key (user_id, cycle_id)
     references public.activity_cycles(user_id, id) on delete set null (cycle_id)
+);
+
+alter table public.assignment_progress add column if not exists session_id text;
+alter table public.assignment_progress add column if not exists session_block_index integer;
+alter table public.assignment_progress add column if not exists session_block_count integer;
+alter table public.assignment_progress drop constraint if exists assignment_progress_session_consistency;
+alter table public.assignment_progress add constraint assignment_progress_session_consistency check (
+  (session_id is null and session_block_index is null and session_block_count is null)
+  or (session_id is not null and session_block_index between 0 and session_block_count - 1
+    and session_block_count between 2 and 3)
 );
 
 create index if not exists assignment_progress_schedule_idx
@@ -216,10 +261,12 @@ begin
   if v_schedule_data is null then raise exception 'schedule not found'; end if;
 
   insert into public.assignment_progress (
-    user_id, saved_schedule_id, group_id, activity_id, date, time_block_id, status
+    user_id, saved_schedule_id, group_id, activity_id, date, time_block_id,
+    session_id, session_block_index, session_block_count, status
   )
   select v_user_id, p_saved_schedule_id, assignment->>'groupId', assignment->>'activityId',
-    (assignment->>'date')::date, assignment->>'timeBlockId', 'planned'
+    (assignment->>'date')::date, assignment->>'timeBlockId', assignment->>'sessionId',
+    (assignment->>'sessionBlockIndex')::integer, (assignment->>'sessionBlockCount')::integer, 'planned'
   from jsonb_array_elements(v_schedule_data #> '{result,assignments}') assignment
   on conflict (saved_schedule_id, group_id, date, time_block_id) do nothing;
 
@@ -245,14 +292,17 @@ begin
       )
   loop
     select id into v_cycle_id from public.activity_cycles
-    where user_id = v_user_id and group_id = v_group->>'id' and status = 'active';
+    where user_id = v_user_id and saved_schedule_id = p_saved_schedule_id
+      and group_id = v_group->>'id' and status = 'active';
     if v_cycle_id is null then
-      insert into public.activity_cycles (user_id, group_id, cycle_number)
+      insert into public.activity_cycles (user_id, saved_schedule_id, group_id, cycle_number)
       values (
         v_user_id,
+        p_saved_schedule_id,
         v_group->>'id',
         coalesce((select max(cycle_number) + 1 from public.activity_cycles
-          where user_id = v_user_id and group_id = v_group->>'id'), 1)
+          where user_id = v_user_id and saved_schedule_id = p_saved_schedule_id
+            and group_id = v_group->>'id'), 1)
       ) returning id into v_cycle_id;
 
       insert into public.cycle_requirements (user_id, cycle_id, activity_id, status)
@@ -286,6 +336,7 @@ declare
   v_progress public.assignment_progress%rowtype;
   v_cycle public.activity_cycles%rowtype;
   v_requirement_id uuid;
+  v_linked_cycle_id uuid;
   v_has_other boolean;
 begin
   if p_status not in ('planned', 'completed', 'cancelled') then raise exception 'invalid progress status'; end if;
@@ -297,14 +348,21 @@ begin
 
   if p_status = 'completed' then
     select * into v_cycle from public.activity_cycles
-    where user_id = p_user_id and group_id = v_progress.group_id and status = 'active' for update;
+    where user_id = p_user_id and saved_schedule_id = v_progress.saved_schedule_id
+      and group_id = v_progress.group_id and status = 'active' for update;
     if found then
       select id into v_requirement_id from public.cycle_requirements
       where user_id = p_user_id and cycle_id = v_cycle.id and activity_id = v_progress.activity_id for update;
       if v_requirement_id is not null then
         update public.cycle_requirements set status = 'completed' where id = v_requirement_id;
-        update public.assignment_progress set status = 'completed', completed_at = now(), cycle_id = v_cycle.id
-        where id = p_progress_id;
+        update public.assignment_progress
+        set status = 'completed', completed_at = now(),
+          cycle_id = case when id = p_progress_id then v_cycle.id else null end
+        where user_id = p_user_id and saved_schedule_id = v_progress.saved_schedule_id
+          and (
+            (v_progress.session_id is null and id = p_progress_id)
+            or (v_progress.session_id is not null and session_id = v_progress.session_id)
+          );
         if not exists (
           select 1 from public.cycle_requirements where cycle_id = v_cycle.id and status = 'pending'
         ) then
@@ -314,35 +372,60 @@ begin
       end if;
     end if;
     update public.assignment_progress set status = 'completed', completed_at = now(), cycle_id = null
-    where id = p_progress_id;
+    where user_id = p_user_id and saved_schedule_id = v_progress.saved_schedule_id
+      and (
+        (v_progress.session_id is null and id = p_progress_id)
+        or (v_progress.session_id is not null and session_id = v_progress.session_id)
+      );
     return;
   end if;
 
-  if v_progress.status = 'completed' and v_progress.cycle_id is not null then
-    select * into v_cycle from public.activity_cycles where id = v_progress.cycle_id for update;
+  if v_progress.status = 'completed' then
+    if v_progress.session_id is null then
+      v_linked_cycle_id := v_progress.cycle_id;
+    else
+      select cycle_id into v_linked_cycle_id
+      from public.assignment_progress
+      where user_id = p_user_id and saved_schedule_id = v_progress.saved_schedule_id
+        and session_id = v_progress.session_id and cycle_id is not null
+      limit 1;
+    end if;
+  end if;
+
+  if v_linked_cycle_id is not null then
+    select * into v_cycle from public.activity_cycles where id = v_linked_cycle_id for update;
     select exists (
       select 1 from public.assignment_progress
-      where id <> p_progress_id and user_id = p_user_id and cycle_id = v_progress.cycle_id
+      where user_id = p_user_id and cycle_id = v_linked_cycle_id
         and activity_id = v_progress.activity_id and status = 'completed'
+        and (
+          (v_progress.session_id is null and id <> p_progress_id)
+          or (v_progress.session_id is not null and session_id is distinct from v_progress.session_id)
+        )
     ) into v_has_other;
     if not v_has_other and exists (
       select 1 from public.cycle_requirements
-      where cycle_id = v_progress.cycle_id and activity_id = v_progress.activity_id and status = 'completed'
+      where cycle_id = v_linked_cycle_id and activity_id = v_progress.activity_id and status = 'completed'
     ) then
       if v_cycle.status = 'completed' and exists (
         select 1 from public.activity_cycles later
-        where later.user_id = p_user_id and later.group_id = v_cycle.group_id
+        where later.user_id = p_user_id and later.saved_schedule_id = v_cycle.saved_schedule_id
+          and later.group_id = v_cycle.group_id
           and later.cycle_number > v_cycle.cycle_number
       ) then raise exception 'later cycle exists'; end if;
       update public.cycle_requirements set status = 'pending'
-      where cycle_id = v_progress.cycle_id and activity_id = v_progress.activity_id;
+      where cycle_id = v_linked_cycle_id and activity_id = v_progress.activity_id;
       if v_cycle.status = 'completed' then
         update public.activity_cycles set status = 'active', completed_at = null where id = v_cycle.id;
       end if;
     end if;
   end if;
   update public.assignment_progress set status = p_status, completed_at = null, cycle_id = null
-  where id = p_progress_id;
+  where user_id = p_user_id and saved_schedule_id = v_progress.saved_schedule_id
+    and (
+      (v_progress.session_id is null and id = p_progress_id)
+      or (v_progress.session_id is not null and session_id = v_progress.session_id)
+    );
 end;
 $$;
 
@@ -369,7 +452,8 @@ begin
   select * into v_cycle from public.activity_cycles where id = v_requirement.cycle_id for update;
   if p_status = 'pending' and v_cycle.status = 'completed' and exists (
     select 1 from public.activity_cycles later
-    where later.user_id = p_user_id and later.group_id = v_cycle.group_id
+    where later.user_id = p_user_id and later.saved_schedule_id = v_cycle.saved_schedule_id
+      and later.group_id = v_cycle.group_id
       and later.cycle_number > v_cycle.cycle_number
   ) then raise exception 'later cycle exists'; end if;
   update public.cycle_requirements set status = p_status where id = p_requirement_id;

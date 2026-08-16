@@ -22,6 +22,9 @@ interface AssignmentProgressRow {
   activity_id: string;
   date: string;
   time_block_id: string;
+  session_id: string | null;
+  session_block_index: number | null;
+  session_block_count: number | null;
   status: AssignmentProgressStatus;
   cycle_id: string | null;
   completed_at: string | null;
@@ -55,6 +58,9 @@ export function mapAssignmentProgress(row: AssignmentProgressRow): AssignmentPro
     activityId: row.activity_id,
     date: row.date,
     timeBlockId: row.time_block_id,
+    ...(row.session_id ? { sessionId: row.session_id } : {}),
+    ...(row.session_block_index !== null ? { sessionBlockIndex: Number(row.session_block_index) } : {}),
+    ...(row.session_block_count !== null ? { sessionBlockCount: Number(row.session_block_count) } : {}),
     status: row.status,
     ...(row.cycle_id ? { cycleId: row.cycle_id } : {}),
     ...(row.completed_at ? { completedAt: row.completed_at } : {}),
@@ -101,11 +107,13 @@ export class AssignmentProgressService implements AssignmentProgressGateway {
       .eq('saved_schedule_id', savedScheduleId).eq('user_id', userId)
       .order('date').order('time_block_id').order('group_id');
     const historyQuery = groupIds.length > 0
-      ? client.from('assignment_progress').select().eq('user_id', userId).eq('status', 'completed')
+      ? client.from('assignment_progress').select().eq('saved_schedule_id', savedScheduleId)
+          .eq('user_id', userId).eq('status', 'completed')
           .in('group_id', [...groupIds]).order('completed_at', { ascending: false })
       : undefined;
     const cyclesQuery = groupIds.length > 0
-      ? client.from('activity_cycles').select().eq('user_id', userId).in('group_id', [...groupIds])
+      ? client.from('activity_cycles').select().eq('saved_schedule_id', savedScheduleId)
+          .eq('user_id', userId).in('group_id', [...groupIds])
           .order('group_id').order('cycle_number')
       : undefined;
     const [progressResult, historyResult, cyclesResult] = await Promise.all([

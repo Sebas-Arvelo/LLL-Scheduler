@@ -19,7 +19,7 @@ import {
 } from './projected-cycles';
 import { calculateScheduleMetrics } from './schedule-metrics';
 
-export const SCHEDULE_GENERATOR_VERSION = 'multi-block-projection-v1';
+export const SCHEDULE_GENERATOR_VERSION = 'multi-block-sessions-v2';
 const DEFAULT_SEED = 0;
 
 function isLocalDate(value: string): value is LocalDate {
@@ -122,6 +122,34 @@ function slotSeed(seed: number, index: number): number {
   return (seed + Math.imul(index + 1, 0x9e3779b1)) >>> 0;
 }
 
+function blocksAreConsecutive(current: ScheduleGenerationInput['timeBlocks'][number], next: ScheduleGenerationInput['timeBlocks'][number]): boolean {
+  if (current.endTime && next.startTime) return current.endTime === next.startTime;
+  const currentName = /^([MT])(\d+)$/i.exec(current.name.trim());
+  const nextName = /^([MT])(\d+)$/i.exec(next.name.trim());
+  return !!currentName && !!nextName && currentName[1].toUpperCase() === nextName[1].toUpperCase() &&
+    Number(nextName[2]) === Number(currentName[2]) + 1;
+}
+
+function sessionSlots(
+  input: ScheduleGenerationInput,
+  slots: readonly ScheduleSlot[],
+  startIndex: number,
+  duration: number,
+): readonly ScheduleSlot[] | undefined {
+  const selected = slots.slice(startIndex, startIndex + duration);
+  if (selected.length !== duration || selected.some((slot) => slot.date !== slots[startIndex].date)) return undefined;
+  for (let index = 1; index < selected.length; index += 1) {
+    const previousBlock = input.timeBlocks.find((block) => block.id === selected[index - 1].timeBlockId)!;
+    const currentBlock = input.timeBlocks.find((block) => block.id === selected[index].timeBlockId)!;
+    if (!blocksAreConsecutive(previousBlock, currentBlock)) return undefined;
+  }
+  return selected;
+}
+
+function sessionId(assignment: Assignment): string {
+  return `session:${assignment.date}:${assignment.groupId}:${assignment.activityId}:${assignment.timeBlockId}`;
+}
+
 export function generateSchedule(input: ScheduleGenerationInput): ScheduleGenerationResult {
   const seed = Number.isFinite(input.seed) ? Math.trunc(input.seed!) >>> 0 : DEFAULT_SEED;
   const validationIssues = validateGenerationInput(input);
@@ -146,6 +174,7 @@ export function generateSchedule(input: ScheduleGenerationInput): ScheduleGenera
   const effects: ProjectedAssignmentEffect[] = [];
   const blocks: ScheduleBlockResult[] = [];
   const unassigned: ScheduleBlockUnassigned[] = [];
+  const continuationsBySlot = new Map<string, Assignment[]>();
   let invalidInput = false;
 
   for (let index = 0; index < slots.length; index += 1) {
@@ -158,10 +187,29 @@ export function generateSchedule(input: ScheduleGenerationInput): ScheduleGenera
       input.activityEligibility,
       slot,
     );
-    const lockedAssignments = input.lockedAssignments.filter(
+    const lockedAssignments = [
+      ...input.lockedAssignments.filter(
       (assignment) => assignment.date === slot.date && assignment.timeBlockId === slot.timeBlockId,
+      ),
+      ...(continuationsBySlot.get(`${slot.date}\u0000${slot.timeBlockId}`) ?? []),
+    ];
+    const forbiddenActivityStarts = input.groups.flatMap((group) =>
+      input.activities.flatMap((activity) => {
+        const duration = activity.durationBlocks ?? 1;
+        if (duration <= 1) return [];
+        const requiredSlots = sessionSlots(input, slots, index, duration);
+        const blocked = !requiredSlots || requiredSlots.some((requiredSlot) =>
+          input.hardConstraints.activityAvailability.some((entry) =>
+            entry.activityId === activity.id && entry.date === requiredSlot.date &&
+            entry.timeBlockId === requiredSlot.timeBlockId && !entry.available,
+          ) || input.hardConstraints.groupUnavailability.some((entry) =>
+            entry.groupId === group.id && entry.date === requiredSlot.date && entry.timeBlockId === requiredSlot.timeBlockId,
+          ),
+        );
+        return blocked ? [{ groupId: group.id, activityId: activity.id }] : [];
+      }),
     );
-    const result = scheduleBlock({
+    const rawResult = scheduleBlock({
       date: slot.date,
       timeBlock,
       groups: input.groups,
@@ -172,11 +220,37 @@ export function generateSchedule(input: ScheduleGenerationInput): ScheduleGenera
       history: input.history,
       projectedAssignments: assignments,
       sameDayAssignments: [...assignments, ...input.lockedAssignments],
+      forbiddenActivityStarts,
       lockedAssignments,
       hardConstraints: input.hardConstraints,
       preferences: input.preferences,
       seed: slotSeed(seed, index),
     });
+    const blockAssignments = rawResult.assignments.map<Assignment>((assignment) => {
+      if (assignment.sessionId) return assignment;
+      const activity = input.activities.find((candidate) => candidate.id === assignment.activityId);
+      const duration = activity?.durationBlocks ?? 1;
+      if (duration <= 1 || assignment.locked) return assignment;
+      const requiredSlots = sessionSlots(input, slots, index, duration);
+      if (!requiredSlots) return assignment;
+      const id = sessionId(assignment);
+      for (let sessionIndex = 1; sessionIndex < requiredSlots.length; sessionIndex += 1) {
+        const continuationSlot = requiredSlots[sessionIndex];
+        const key = `${continuationSlot.date}\u0000${continuationSlot.timeBlockId}`;
+        const continuations = continuationsBySlot.get(key) ?? [];
+        continuations.push({
+          ...assignment,
+          timeBlockId: continuationSlot.timeBlockId,
+          sessionId: id,
+          sessionBlockIndex: sessionIndex,
+          sessionBlockCount: duration,
+          locked: true,
+        });
+        continuationsBySlot.set(key, continuations);
+      }
+      return { ...assignment, sessionId: id, sessionBlockIndex: 0, sessionBlockCount: duration };
+    });
+    const result = { ...rawResult, assignments: blockAssignments };
     blocks.push({ slot, result });
     warnings.push(...result.diagnostics.warnings);
     errors.push(...result.diagnostics.errors);
@@ -187,7 +261,11 @@ export function generateSchedule(input: ScheduleGenerationInput): ScheduleGenera
       break;
     }
 
-    const update = applyAssignmentsToProjectedCycles(projectedCycles, result.assignments, slot);
+    const completedSessions = result.assignments.filter(
+      (assignment) => assignment.sessionBlockCount === undefined ||
+        assignment.sessionBlockIndex === assignment.sessionBlockCount - 1,
+    );
+    const update = applyAssignmentsToProjectedCycles(projectedCycles, completedSessions, slot);
     projectedCycles = update.states;
     effects.push(...update.effects);
   }

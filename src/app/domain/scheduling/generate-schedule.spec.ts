@@ -105,10 +105,18 @@ function expectMultiBlockInvariants(result: ScheduleGenerationResult, input: Sch
   const eligible = new Set(input.activityEligibility.map((item) => `${item.activityId}\u0000${item.groupCategoryId}`));
   const assignmentKeys = result.assignments.map((item) => `${item.date}\u0000${item.timeBlockId}\u0000${item.groupId}`);
   expect(new Set(assignmentKeys).size).toBe(assignmentKeys.length);
-  const dailyActivityKeys = result.assignments.map(
-    (item) => `${item.date}\u0000${item.groupId}\u0000${item.activityId}`,
-  );
-  expect(new Set(dailyActivityKeys).size).toBe(dailyActivityKeys.length);
+  const dailyActivities = new Map<string, Assignment[]>();
+  for (const assignment of result.assignments) {
+    const key = `${assignment.date}\u0000${assignment.groupId}\u0000${assignment.activityId}`;
+    dailyActivities.set(key, [...(dailyActivities.get(key) ?? []), assignment]);
+  }
+  for (const repeated of [...dailyActivities.values()].filter((items) => items.length > 1)) {
+    expect(repeated.every((assignment) => !!assignment.sessionId)).toBeTrue();
+    expect(new Set(repeated.map((assignment) => assignment.sessionId)).size).toBe(1);
+    expect(repeated.map((assignment) => assignment.sessionBlockIndex).sort()).toEqual(
+      Array.from({ length: repeated.length }, (_, index) => index),
+    );
+  }
 
   for (const blockResult of result.blocks) {
     const slotAssignments = result.assignments.filter(
@@ -241,6 +249,51 @@ describe('multi-block schedule generation', () => {
     expect(new Set(assignmentsFor(result, 'g2')).size).toBe(3);
     expect(result.unassigned).toEqual([]);
     expectMultiBlockInvariants(result, input);
+  });
+
+  it('reserves consecutive blocks as one session for a multi-block activity', () => {
+    const longActivity = activity('boats', { durationBlocks: 2 });
+    const input = generationInput({
+      blocks: [block('M1', 1), block('M2', 2), block('M3', 3)],
+      groups: [group('g1')],
+      activities: [longActivity, activity('project'), activity('pool')],
+      cycles: [cycle('g1', ['boats'])],
+    });
+    const result = generateSchedule(input);
+    const boats = result.assignments.filter((assignment) => assignment.activityId === 'boats');
+
+    expect(boats.length).toBe(2);
+    expect(boats.map((assignment) => assignment.timeBlockId)).toEqual(['M1', 'M2']);
+    expect(new Set(boats.map((assignment) => assignment.sessionId)).size).toBe(1);
+    expect(boats.map((assignment) => assignment.sessionBlockIndex)).toEqual([0, 1]);
+    expect(result.projectedCycles[0].cycles[0].snapshot.requirements[0].status).toBe('completed');
+    expectMultiBlockInvariants(result, input);
+  });
+
+  it('supports three-block sessions and never joins morning to afternoon', () => {
+    const expedition = activity('expedition', { durationBlocks: 3 });
+    const morning = generationInput({
+      blocks: [block('M1', 1), block('M2', 2), block('M3', 3)],
+      groups: [group('g1')],
+      activities: [expedition],
+    });
+    const morningResult = generateSchedule(morning);
+    expect(morningResult.assignments.map((assignment) => assignment.timeBlockId)).toEqual(['M1', 'M2', 'M3']);
+    expect(new Set(morningResult.assignments.map((assignment) => assignment.sessionId)).size).toBe(1);
+
+    const boats = activity('boats', { durationBlocks: 2 });
+    const splitDay = generationInput({
+      blocks: [block('M3', 3), block('T1', 4), block('T2', 5)],
+      groups: [group('g1')],
+      activities: [boats, activity('project')],
+      cycles: [cycle('g1', ['boats'])],
+    });
+    const splitResult = generateSchedule(splitDay);
+    const boatBlocks = splitResult.assignments
+      .filter((assignment) => assignment.activityId === 'boats')
+      .map((assignment) => assignment.timeBlockId);
+    expect(boatBlocks).toEqual(['T1', 'T2']);
+    expect(boatBlocks).not.toEqual(['M3', 'T1']);
   });
 
   it('reserves a future locked assignment only in its own block and projects it into the cycle', () => {
