@@ -993,7 +993,7 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   progressStatusLabel(status: AssignmentProgressStatus): string {
-    return status === 'completed' ? 'Completada' : status === 'cancelled' ? 'Cancelada' : 'Planificada';
+    return status === 'completed' ? 'Completada' : status === 'cancelled' ? 'Cancelada' : 'Incompleta';
   }
 
   async changeProgressStatus(progress: AssignmentProgress, status: AssignmentProgressStatus): Promise<void> {

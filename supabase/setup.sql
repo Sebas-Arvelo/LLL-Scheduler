@@ -254,21 +254,28 @@ declare
   v_schedule_data jsonb;
   v_group jsonb;
   v_cycle_id uuid;
+  v_progress_id uuid;
+  v_new_progress_ids uuid[] := '{}';
 begin
   select schedule_data into v_schedule_data
   from public.saved_schedules
   where id = p_saved_schedule_id and user_id = v_user_id;
   if v_schedule_data is null then raise exception 'schedule not found'; end if;
 
-  insert into public.assignment_progress (
-    user_id, saved_schedule_id, group_id, activity_id, date, time_block_id,
-    session_id, session_block_index, session_block_count, status
+  with inserted_progress as (
+    insert into public.assignment_progress (
+      user_id, saved_schedule_id, group_id, activity_id, date, time_block_id,
+      session_id, session_block_index, session_block_count, status
+    )
+    select v_user_id, p_saved_schedule_id, assignment->>'groupId', assignment->>'activityId',
+      (assignment->>'date')::date, assignment->>'timeBlockId', assignment->>'sessionId',
+      (assignment->>'sessionBlockIndex')::integer, (assignment->>'sessionBlockCount')::integer, 'planned'
+    from jsonb_array_elements(v_schedule_data #> '{result,assignments}') assignment
+    on conflict (saved_schedule_id, group_id, date, time_block_id) do nothing
+    returning id
   )
-  select v_user_id, p_saved_schedule_id, assignment->>'groupId', assignment->>'activityId',
-    (assignment->>'date')::date, assignment->>'timeBlockId', assignment->>'sessionId',
-    (assignment->>'sessionBlockIndex')::integer, (assignment->>'sessionBlockCount')::integer, 'planned'
-  from jsonb_array_elements(v_schedule_data #> '{result,assignments}') assignment
-  on conflict (saved_schedule_id, group_id, date, time_block_id) do nothing;
+  select coalesce(array_agg(id), '{}') into v_new_progress_ids
+  from inserted_progress;
 
   for v_group in
     select distinct group_item
@@ -318,6 +325,11 @@ begin
       on conflict (cycle_id, activity_id) do nothing;
     end if;
     v_cycle_id := null;
+  end loop;
+
+  foreach v_progress_id in array v_new_progress_ids
+  loop
+    perform public.set_assignment_progress_status(v_progress_id, 'completed', v_user_id);
   end loop;
 end;
 $$;
