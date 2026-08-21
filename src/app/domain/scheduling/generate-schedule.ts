@@ -58,6 +58,15 @@ function validateGenerationInput(input: ScheduleGenerationInput): readonly Sched
     .map((block) => block.order)
     .filter((order, index, all) => all.indexOf(order) !== index);
   const requestedDates = new Set(input.dates);
+  const activityIds = new Set(input.activities.map((activity) => activity.id));
+  const blockIds = new Set(input.timeBlocks.map((block) => block.id));
+  const invalidActivityStartBlocks = (input.hardConstraints.activityStartBlocks ?? []).filter(
+    (entry) => !requestedDates.has(entry.date) || !activityIds.has(entry.activityId) || !blockIds.has(entry.timeBlockId),
+  );
+  const activityStartKeys = (input.hardConstraints.activityStartBlocks ?? []).map(
+    (entry) => `${entry.date}\u0000${entry.activityId}`,
+  );
+  const duplicateActivityStarts = activityStartKeys.filter((key, index, all) => all.indexOf(key) !== index);
   const lockedDailyActivityKeys = input.lockedAssignments
     .filter((assignment) => requestedDates.has(assignment.date))
     .map((assignment) => `${assignment.date}\u0000${assignment.groupId}\u0000${assignment.activityId}`);
@@ -71,6 +80,8 @@ function validateGenerationInput(input: ScheduleGenerationInput): readonly Sched
     wrongSeasonBlocks.length > 0 ||
     duplicateBlockIds.length > 0 ||
     duplicateBlockOrders.length > 0 ||
+    invalidActivityStartBlocks.length > 0 ||
+    duplicateActivityStarts.length > 0 ||
     duplicateLockedDailyActivities.length > 0 ||
     new Set(input.dates).size !== input.dates.length
   ) {
@@ -84,6 +95,8 @@ function validateGenerationInput(input: ScheduleGenerationInput): readonly Sched
         wrongSeasonBlockIds: wrongSeasonBlocks.map((block) => block.id),
         duplicateBlockIds: [...new Set(duplicateBlockIds)],
         duplicateBlockOrders: [...new Set(duplicateBlockOrders)],
+        invalidActivityStartBlocks,
+        duplicateActivityStarts: [...new Set(duplicateActivityStarts)],
         duplicateDates: input.dates.filter((date, index, all) => all.indexOf(date) !== index),
         duplicateLockedDailyActivities: [...new Set(duplicateLockedDailyActivities)],
       },
@@ -195,6 +208,12 @@ export function generateSchedule(input: ScheduleGenerationInput): ScheduleGenera
     ];
     const forbiddenActivityStarts = input.groups.flatMap((group) =>
       input.activities.flatMap((activity) => {
+        const requiredStart = input.hardConstraints.activityStartBlocks?.find(
+          (entry) => entry.activityId === activity.id && entry.date === slot.date,
+        );
+        if (requiredStart && requiredStart.timeBlockId !== slot.timeBlockId) {
+          return [{ groupId: group.id, activityId: activity.id }];
+        }
         const duration = activity.durationBlocks ?? 1;
         if (duration <= 1) return [];
         const requiredSlots = sessionSlots(input, slots, index, duration);

@@ -253,14 +253,17 @@
             <input type="number" [min]="activity.minGroups ?? 1" [(ngModel)]="activity.maxGroups" (ngModelChange)="markScheduleStale()" />
           </label>
           <label class="compact-field capacity-field">
-            <span>Máx. participantes</span>
-            <input
-              type="number"
-              min="1"
-              placeholder="Sin límite"
-              [ngModel]="activity.maxParticipants ?? null"
-              (ngModelChange)="setMaxParticipants(activity, $event)"
-            />
+            <span>Elegir bloque</span>
+            <select
+              [ngModel]="activityStartBlockId(activity.id)"
+              (ngModelChange)="setActivityStartBlock(activity.id, $event)"
+              [disabled]="dayMode === 'special' || !isActivityAvailableToday(activity.id)"
+            >
+              <option value="">Cualquiera</option>
+              <option *ngFor="let block of activityStartBlockOptions(activity); trackBy: trackById" [value]="block.id">
+                {{ block.name }}
+              </option>
+            </select>
           </label>
           <label class="compact-field capacity-field">
             <span>Duración (bloques)</span>
@@ -565,7 +568,15 @@
           </span>
         </summary>
         <div class="history-details">
-          <p><strong>Realizadas:</strong> {{ group.completedActivities.length ? group.completedActivities.join(', ') : 'Ninguna' }}</p>
+          <div>
+            <strong>Realizadas</strong>
+            <ul *ngIf="group.completedActivities.length; else noCompleted">
+              <li *ngFor="let completed of group.completedActivities">
+                <span>{{ completed.name }} · {{ completed.date }} · {{ completed.timeBlockName }}</span>
+              </li>
+            </ul>
+            <ng-template #noCompleted><p>Ninguna.</p></ng-template>
+          </div>
           <div>
             <strong>Pendientes</strong>
             <ul *ngIf="group.pending.length; else noPending">

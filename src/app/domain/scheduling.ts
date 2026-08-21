@@ -48,9 +48,17 @@ export interface GroupUnavailability {
   reason?: string;
 }
 
+/** Restricts an activity to start in one specific block on a given day. */
+export interface ActivityStartBlock {
+  activityId: ActivityId;
+  date: LocalDate;
+  timeBlockId: TimeBlockId;
+}
+
 export interface SchedulingHardConstraints {
   activityAvailability: readonly ActivityAvailability[];
   groupUnavailability: readonly GroupUnavailability[];
+  activityStartBlocks?: readonly ActivityStartBlock[];
 }
 
 export interface SchedulingCostWeights {

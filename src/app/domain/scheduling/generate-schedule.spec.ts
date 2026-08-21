@@ -71,6 +71,7 @@ function generationInput(options: {
   locked?: readonly Assignment[];
   unavailableActivities?: readonly { activityId: string; date: string; timeBlockId: string }[];
   unavailableGroups?: readonly { groupId: string; date: string; timeBlockId: string }[];
+  activityStartBlocks?: readonly { activityId: string; date: string; timeBlockId: string }[];
   seed?: number;
 }): ScheduleGenerationInput {
   return {
@@ -90,6 +91,7 @@ function generationInput(options: {
         available: false,
       })),
       groupUnavailability: options.unavailableGroups ?? [],
+      activityStartBlocks: options.activityStartBlocks ?? [],
     },
     seed: options.seed ?? 19,
   };
@@ -294,6 +296,22 @@ describe('multi-block schedule generation', () => {
       .map((assignment) => assignment.timeBlockId);
     expect(boatBlocks).toEqual(['T1', 'T2']);
     expect(boatBlocks).not.toEqual(['M3', 'T1']);
+  });
+
+  it('starts a selected activity only in its chosen daily block', () => {
+    const input = generationInput({
+      blocks: [block('M1', 1), block('M2', 2), block('M3', 3)],
+      groups: [group('g1')],
+      activities: [activity('pool'), activity('project'), activity('sport')],
+      cycles: [cycle('g1', ['pool'])],
+      activityStartBlocks: [{ activityId: 'pool', date: '2026-08-10', timeBlockId: 'M3' }],
+    });
+
+    const result = generateSchedule(input);
+    const poolAssignments = result.assignments.filter((assignment) => assignment.activityId === 'pool');
+    expect(poolAssignments.length).toBe(1);
+    expect(poolAssignments[0].timeBlockId).toBe('M3');
+    expect(result.unassigned).toEqual([]);
   });
 
   it('reserves a future locked assignment only in its own block and projects it into the cycle', () => {

@@ -200,6 +200,29 @@ describe('AppComponent real scheduling integration', () => {
     expect(component.generationResult).toBeUndefined();
   });
 
+  it('restricts an activity to the selected block for the current day', () => {
+    const component = new AppComponent();
+    component.setActivityStartBlock('piscina', 'block-m3');
+
+    component.generate();
+
+    const poolAssignments = component.generationResult!.assignments.filter(
+      (assignment) => assignment.activityId === 'piscina',
+    );
+    expect(poolAssignments.length).toBeGreaterThan(0);
+    expect(poolAssignments.every((assignment) => assignment.timeBlockId === 'block-m3')).toBeTrue();
+
+    component.prepareNextDay();
+    expect(component.activityStartBlockId('piscina')).toBe('');
+  });
+
+  it('offers only starting blocks where a multi-block activity fits', () => {
+    const component = new AppComponent();
+    const boats = component.activities.find((activity) => activity.id === 'botes')!;
+
+    expect(component.activityStartBlockOptions(boats).map((block) => block.name)).toEqual(['M1', 'M2', 'T1']);
+  });
+
   it('marks an existing schedule as stale after configuration changes until regeneration', () => {
     const component = new AppComponent();
     component.generate();
@@ -610,5 +633,32 @@ describe('AppComponent real scheduling integration', () => {
     expect(view.completedActivities.length).toBe(1);
     expect(view.pending.map((item) => item.name)).toContain('arqueria');
     expect(view.exempted.map((item) => item.name)).toContain('Piscina');
+  });
+
+  it('uses current progress when the separately loaded history is stale', () => {
+    const component = new AppComponent();
+    component.generate();
+    const initial = executionStateFor(component);
+    const first = initial.progress[0];
+    const completed = { ...first, status: 'completed' as const, completedAt: '2026-08-15T13:00:00Z' };
+    component.executionState = {
+      progress: [
+        completed,
+        { ...completed, id: 'repeated-progress', date: '2026-08-16', completedAt: '2026-08-16T13:00:00Z' },
+      ],
+      history: [],
+      cycles: [],
+    };
+
+    expect(component.realCycleViews.find((item) => item.groupId === first.groupId)!.completedActivities.length)
+      .toBe(2);
+
+    component.executionState = {
+      progress: [{ ...first, status: 'planned' }],
+      history: [{ ...first, status: 'completed', completedAt: '2026-08-15T13:00:00Z' }],
+      cycles: [],
+    };
+    expect(component.realCycleViews.find((item) => item.groupId === first.groupId)!.completedActivities)
+      .toEqual([]);
   });
 });

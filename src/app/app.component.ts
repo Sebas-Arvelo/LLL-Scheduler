@@ -72,7 +72,13 @@ interface RealCycleView {
   groupName: string;
   currentCycle?: RealActivityCycle;
   completedCycleCount: number;
-  completedActivities: readonly string[];
+  completedActivities: readonly {
+    progressId: string;
+    name: string;
+    date: string;
+    timeBlockName: string;
+    completedAt: string;
+  }[];
   pending: readonly { id: string; name: string }[];
   exempted: readonly { id: string; name: string }[];
 }
@@ -103,6 +109,14 @@ function currentLocalDate(now = new Date()): string {
   const month = String(now.getMonth() + 1).padStart(2, '0');
   const day = String(now.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+function timeBlocksAreConsecutive(current: TimeBlock, next: TimeBlock): boolean {
+  if (current.endTime && next.startTime) return current.endTime === next.startTime;
+  const currentName = /^([MT])(\d+)$/i.exec(current.name.trim());
+  const nextName = /^([MT])(\d+)$/i.exec(next.name.trim());
+  return !!currentName && !!nextName && currentName[1].toUpperCase() === nextName[1].toUpperCase() &&
+    Number(nextName[2]) === Number(currentName[2]) + 1;
 }
 
 function mergeById<T extends { id: string }>(previous: readonly T[], next: readonly T[]): T[] {
@@ -259,6 +273,7 @@ export class AppComponent implements OnInit, OnDestroy {
   specialDayActivityName = 'Ecoaventura';
   afternoonActivityName = 'Batalla de Araure';
   dailyUnavailableActivityIds: string[] = [];
+  dailyActivityStartBlockIds: Record<string, string> = {};
   seed = 2026;
   activitySearch = '';
   showProjectedCycles = false;
@@ -381,7 +396,11 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   get realHistory() {
-    return deriveRealHistory(this.executionState.history ?? this.executionState.progress);
+    const currentProgressIds = new Set(this.executionState.progress.map((item) => item.id));
+    const previousHistory = (this.executionState.history ?? []).filter(
+      (item) => !currentProgressIds.has(item.id),
+    );
+    return deriveRealHistory([...previousHistory, ...this.executionState.progress]);
   }
 
   get currentRealCycles(): readonly RealActivityCycle[] {
@@ -390,11 +409,18 @@ export class AppComponent implements OnInit, OnDestroy {
 
   get realCycleViews(): readonly RealCycleView[] {
     const activityById = new Map(this.generatedActivities.map((activity) => [activity.id, activity.name]));
-    const historyByGroup = new Map<string, Set<string>>();
+    const blockById = new Map(this.generatedTimeBlocks.map((block) => [block.id, block.name]));
+    const historyByGroup = new Map<string, RealCycleView['completedActivities'][number][]>();
     for (const entry of this.realHistory) {
-      const names = historyByGroup.get(entry.groupId) ?? new Set<string>();
-      names.add(activityById.get(entry.activityId) ?? entry.activityId);
-      historyByGroup.set(entry.groupId, names);
+      const completed = historyByGroup.get(entry.groupId) ?? [];
+      completed.push({
+        progressId: entry.progressId,
+        name: activityById.get(entry.activityId) ?? entry.activityId,
+        date: entry.date,
+        timeBlockName: blockById.get(entry.timeBlockId) ?? entry.timeBlockId,
+        completedAt: entry.completedAt,
+      });
+      historyByGroup.set(entry.groupId, completed);
     }
     return this.generatedGroups.map((group) => {
       const groupCycles = this.executionState.cycles.filter((cycle) => cycle.groupId === group.id);
@@ -404,7 +430,8 @@ export class AppComponent implements OnInit, OnDestroy {
         groupName: group.name,
         ...(selected ? { currentCycle: selected } : {}),
         completedCycleCount: groupCycles.filter((cycle) => cycle.status === 'completed').length,
-        completedActivities: [...(historyByGroup.get(group.id) ?? [])].sort(),
+        completedActivities: [...(historyByGroup.get(group.id) ?? [])]
+          .sort((left, right) => right.completedAt.localeCompare(left.completedAt)),
         pending: selected?.requirements.filter((item) => item.status === 'pending')
           .map((item) => ({ id: item.id, name: activityById.get(item.activityId) ?? item.activityId })) ?? [],
         exempted: selected?.requirements.filter((item) => item.status === 'exempted')
@@ -499,12 +526,40 @@ export class AppComponent implements OnInit, OnDestroy {
     } else if (mode === 'special') {
       for (const block of this.timeBlocks) block.active = false;
     }
+    this.clearInvalidActivityStartBlocks();
     this.markScheduleStale();
   }
 
   setBlockActive(block: TimeBlock, active: boolean): void {
     block.active = active;
     this.dayMode = 'custom';
+    this.clearInvalidActivityStartBlocks();
+    this.markScheduleStale();
+  }
+
+  activityStartBlockId(activityId: string): string {
+    return this.dailyActivityStartBlockIds[activityId] ?? '';
+  }
+
+  activityStartBlockOptions(activity: Activity): readonly TimeBlock[] {
+    const duration = activity.durationBlocks ?? 1;
+    const blocks = this.timeBlocks
+      .filter((block) => block.active)
+      .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id));
+    return blocks.filter((_, startIndex) => {
+      const selected = blocks.slice(startIndex, startIndex + duration);
+      return selected.length === duration && selected.slice(1).every(
+        (block, index) => timeBlocksAreConsecutive(selected[index], block),
+      );
+    });
+  }
+
+  setActivityStartBlock(activityId: string, timeBlockId: string): void {
+    if (timeBlockId) this.dailyActivityStartBlockIds = { ...this.dailyActivityStartBlockIds, [activityId]: timeBlockId };
+    else {
+      const { [activityId]: _removed, ...remaining } = this.dailyActivityStartBlockIds;
+      this.dailyActivityStartBlockIds = remaining;
+    }
     this.markScheduleStale();
   }
 
@@ -527,6 +582,7 @@ export class AppComponent implements OnInit, OnDestroy {
     this.timeBlocks = this.timeBlocks.filter((block) => !block.id.startsWith('special-all-day-'));
     for (const block of this.timeBlocks) block.active = true;
     this.dailyUnavailableActivityIds = [];
+    this.dailyActivityStartBlockIds = {};
     this.activitySlotView = undefined;
     this.executionStateStatus = 'idle';
     this.executionMessage = '';
@@ -561,13 +617,7 @@ export class AppComponent implements OnInit, OnDestroy {
 
     this.activities = this.activities.filter((candidate) => candidate.id !== activity.id);
     this.activityEligibility = this.activityEligibility.filter((entry) => entry.activityId !== activity.id);
-    this.markScheduleStale();
-  }
-
-  setMaxParticipants(activity: Activity, value: number | null): void {
-    const normalized = Number(value);
-    if (Number.isInteger(normalized) && normalized > 0) activity.maxParticipants = normalized;
-    else delete activity.maxParticipants;
+    this.setActivityStartBlock(activity.id, '');
     this.markScheduleStale();
   }
 
@@ -578,6 +628,7 @@ export class AppComponent implements OnInit, OnDestroy {
 
   setActivityDuration(activity: Activity, value: number): void {
     activity.durationBlocks = Number(value);
+    this.clearInvalidActivityStartBlocks();
     this.markScheduleStale();
   }
 
@@ -1066,6 +1117,12 @@ export class AppComponent implements OnInit, OnDestroy {
       errors.push('Los bloques activos no pueden compartir el mismo orden.');
     }
     const activeActivities = this.activities.filter((activity) => activity.active);
+    if (activeActivities.some((activity) => {
+      const selectedBlockId = this.activityStartBlockId(activity.id);
+      return selectedBlockId && !this.activityStartBlockOptions(activity).some((block) => block.id === selectedBlockId);
+    })) {
+      errors.push('El bloque elegido debe estar activo y tener espacio consecutivo para la duración de la actividad.');
+    }
     if (
       activeActivities.some(
         (activity) =>
@@ -1114,6 +1171,7 @@ export class AppComponent implements OnInit, OnDestroy {
               available: false,
             }))),
           groupUnavailability: [],
+          activityStartBlocks: this.dailyActivityStartBlocks(activeBlocks),
         },
       };
     }
@@ -1176,6 +1234,7 @@ export class AppComponent implements OnInit, OnDestroy {
             })),
           ],
           groupUnavailability: [],
+          activityStartBlocks: this.dailyActivityStartBlocks(morningBlocks),
         },
       };
     }
@@ -1221,6 +1280,26 @@ export class AppComponent implements OnInit, OnDestroy {
         groupUnavailability: [],
       },
     };
+  }
+
+  private dailyActivityStartBlocks(blocks: readonly TimeBlock[]) {
+    const activeBlockIds = new Set(blocks.map((block) => block.id));
+    return Object.entries(this.dailyActivityStartBlockIds)
+      .filter(([, timeBlockId]) => activeBlockIds.has(timeBlockId))
+      .map(([activityId, timeBlockId]) => ({
+        activityId,
+        date: this.planningDate,
+        timeBlockId,
+      }));
+  }
+
+  private clearInvalidActivityStartBlocks(): void {
+    this.dailyActivityStartBlockIds = Object.fromEntries(
+      Object.entries(this.dailyActivityStartBlockIds).filter(([activityId, timeBlockId]) => {
+        const activity = this.activities.find((candidate) => candidate.id === activityId);
+        return !!activity && this.activityStartBlockOptions(activity).some((block) => block.id === timeBlockId);
+      }),
+    );
   }
 
   private realCycleSnapshots(): readonly ActivityCycleSnapshot[] {
