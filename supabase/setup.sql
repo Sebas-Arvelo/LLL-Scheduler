@@ -143,7 +143,6 @@ create table if not exists public.assignment_progress (
   session_block_index integer,
   session_block_count integer,
   status text not null default 'planned' check (status in ('planned', 'completed', 'cancelled')),
-  status_manually_set boolean not null default false,
   cycle_id uuid,
   completed_at timestamptz,
   created_at timestamptz not null default now(),
@@ -167,7 +166,6 @@ create table if not exists public.assignment_progress (
 alter table public.assignment_progress add column if not exists session_id text;
 alter table public.assignment_progress add column if not exists session_block_index integer;
 alter table public.assignment_progress add column if not exists session_block_count integer;
-alter table public.assignment_progress add column if not exists status_manually_set boolean not null default false;
 alter table public.assignment_progress drop constraint if exists assignment_progress_session_consistency;
 alter table public.assignment_progress add constraint assignment_progress_session_consistency check (
   (session_id is null and session_block_index is null and session_block_count is null)
@@ -257,22 +255,27 @@ declare
   v_group jsonb;
   v_cycle_id uuid;
   v_progress_id uuid;
-  v_auto_complete_progress_ids uuid[] := '{}';
+  v_new_progress_ids uuid[] := '{}';
 begin
   select schedule_data into v_schedule_data
   from public.saved_schedules
   where id = p_saved_schedule_id and user_id = v_user_id;
   if v_schedule_data is null then raise exception 'schedule not found'; end if;
 
-  insert into public.assignment_progress (
-    user_id, saved_schedule_id, group_id, activity_id, date, time_block_id,
-    session_id, session_block_index, session_block_count, status
+  with inserted_progress as (
+    insert into public.assignment_progress (
+      user_id, saved_schedule_id, group_id, activity_id, date, time_block_id,
+      session_id, session_block_index, session_block_count, status
+    )
+    select v_user_id, p_saved_schedule_id, assignment->>'groupId', assignment->>'activityId',
+      (assignment->>'date')::date, assignment->>'timeBlockId', assignment->>'sessionId',
+      (assignment->>'sessionBlockIndex')::integer, (assignment->>'sessionBlockCount')::integer, 'planned'
+    from jsonb_array_elements(v_schedule_data #> '{result,assignments}') assignment
+    on conflict (saved_schedule_id, group_id, date, time_block_id) do nothing
+    returning id
   )
-  select v_user_id, p_saved_schedule_id, assignment->>'groupId', assignment->>'activityId',
-    (assignment->>'date')::date, assignment->>'timeBlockId', assignment->>'sessionId',
-    (assignment->>'sessionBlockIndex')::integer, (assignment->>'sessionBlockCount')::integer, 'planned'
-  from jsonb_array_elements(v_schedule_data #> '{result,assignments}') assignment
-  on conflict (saved_schedule_id, group_id, date, time_block_id) do nothing;
+  select coalesce(array_agg(id), '{}') into v_new_progress_ids
+  from inserted_progress;
 
   for v_group in
     select distinct group_item
@@ -324,22 +327,9 @@ begin
     v_cycle_id := null;
   end loop;
 
-  select coalesce(array_agg(id order by date, time_block_id, group_id), '{}')
-  into v_auto_complete_progress_ids
-  from public.assignment_progress
-  where user_id = v_user_id and saved_schedule_id = p_saved_schedule_id
-    and status = 'planned' and not status_manually_set;
-
-  foreach v_progress_id in array v_auto_complete_progress_ids
+  foreach v_progress_id in array v_new_progress_ids
   loop
     perform public.set_assignment_progress_status(v_progress_id, 'completed', v_user_id);
-    update public.assignment_progress
-    set status_manually_set = false
-    where user_id = v_user_id and saved_schedule_id = p_saved_schedule_id
-      and (
-        id = v_progress_id
-        or session_id = (select session_id from public.assignment_progress where id = v_progress_id)
-      );
   end loop;
 end;
 $$;
@@ -379,7 +369,6 @@ begin
         update public.cycle_requirements set status = 'completed' where id = v_requirement_id;
         update public.assignment_progress
         set status = 'completed', completed_at = now(),
-          status_manually_set = true,
           cycle_id = case when id = p_progress_id then v_cycle.id else null end
         where user_id = p_user_id and saved_schedule_id = v_progress.saved_schedule_id
           and (
@@ -394,8 +383,7 @@ begin
         return;
       end if;
     end if;
-    update public.assignment_progress
-    set status = 'completed', completed_at = now(), cycle_id = null, status_manually_set = true
+    update public.assignment_progress set status = 'completed', completed_at = now(), cycle_id = null
     where user_id = p_user_id and saved_schedule_id = v_progress.saved_schedule_id
       and (
         (v_progress.session_id is null and id = p_progress_id)
@@ -444,8 +432,7 @@ begin
       end if;
     end if;
   end if;
-  update public.assignment_progress
-  set status = p_status, completed_at = null, cycle_id = null, status_manually_set = true
+  update public.assignment_progress set status = p_status, completed_at = null, cycle_id = null
   where user_id = p_user_id and saved_schedule_id = v_progress.saved_schedule_id
     and (
       (v_progress.session_id is null and id = p_progress_id)
@@ -490,44 +477,9 @@ begin
 end;
 $$;
 
-create or replace function public.delete_schedule_day(
-  p_saved_schedule_id uuid,
-  p_date date,
-  p_user_id uuid
-)
-returns void
-language plpgsql
-security invoker
-set search_path = public
-as $$
-declare
-  v_progress record;
-begin
-  if p_user_id is distinct from auth.uid() then raise exception 'user mismatch'; end if;
-  if not exists (
-    select 1 from public.saved_schedules
-    where id = p_saved_schedule_id and user_id = p_user_id
-  ) then raise exception 'schedule not found'; end if;
-
-  for v_progress in
-    select id from public.assignment_progress
-    where user_id = p_user_id and saved_schedule_id = p_saved_schedule_id
-      and date = p_date and status = 'completed'
-    order by completed_at desc nulls last
-  loop
-    perform public.set_assignment_progress_status(v_progress.id, 'planned', p_user_id);
-  end loop;
-
-  delete from public.assignment_progress
-  where user_id = p_user_id and saved_schedule_id = p_saved_schedule_id and date = p_date;
-end;
-$$;
-
 revoke all on function public.initialize_schedule_execution(uuid) from public, anon;
 grant execute on function public.initialize_schedule_execution(uuid) to authenticated;
 revoke all on function public.set_assignment_progress_status(uuid, text, uuid) from public, anon;
 grant execute on function public.set_assignment_progress_status(uuid, text, uuid) to authenticated;
 revoke all on function public.set_cycle_requirement_status(uuid, text, uuid) from public, anon;
 grant execute on function public.set_cycle_requirement_status(uuid, text, uuid) to authenticated;
-revoke all on function public.delete_schedule_day(uuid, date, uuid) from public, anon;
-grant execute on function public.delete_schedule_day(uuid, date, uuid) to authenticated;
