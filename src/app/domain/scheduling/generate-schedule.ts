@@ -249,7 +249,7 @@ export function generateSchedule(input: ScheduleGenerationInput): ScheduleGenera
       if (assignment.sessionId) return assignment;
       const activity = input.activities.find((candidate) => candidate.id === assignment.activityId);
       const duration = activity?.durationBlocks ?? 1;
-      if (duration <= 1 || assignment.locked) return assignment;
+      if (duration <= 1) return assignment;
       const requiredSlots = sessionSlots(input, slots, index, duration);
       if (!requiredSlots) return assignment;
       const id = sessionId(assignment);

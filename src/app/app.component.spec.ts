@@ -60,6 +60,7 @@ function assignmentProgressGateway(state: RealExecutionState): AssignmentProgres
     load: async () => state,
     setStatus: async () => undefined,
     setRequirementStatus: async () => undefined,
+    deleteDay: async () => undefined,
   };
 }
 
@@ -214,6 +215,29 @@ describe('AppComponent real scheduling integration', () => {
 
     component.prepareNextDay();
     expect(component.activityStartBlockId('piscina')).toBe('');
+  });
+
+  it('sends every eligible cabin to an activity with a selected block', () => {
+    const component = new AppComponent();
+    const pool = component.activities.find((activity) => activity.id === 'piscina')!;
+    for (const category of component.groupCategories) {
+      component.setEligibility(pool.id, category.id, category.id === 'sabana');
+    }
+    pool.minGroups = 12;
+    pool.maxGroups = 12;
+    component.setActivityStartBlock(pool.id, 'block-m3');
+
+    component.generate();
+
+    const poolAssignments = component.generationResult!.assignments.filter(
+      (assignment) => assignment.activityId === pool.id,
+    );
+    const sabanaGroups = component.generatedGroups.filter((group) => group.categoryId === 'sabana');
+    expect(poolAssignments.length).toBe(12);
+    expect(poolAssignments.map((assignment) => assignment.groupId).sort())
+      .toEqual(sabanaGroups.map((group) => group.id).sort());
+    expect(poolAssignments.every((assignment) => assignment.timeBlockId === 'block-m3')).toBeTrue();
+    expect(poolAssignments.every((assignment) => assignment.locked)).toBeTrue();
   });
 
   it('offers only starting blocks where a multi-block activity fits', () => {
@@ -660,5 +684,68 @@ describe('AppComponent real scheduling integration', () => {
     };
     expect(component.realCycleViews.find((item) => item.groupId === first.groupId)!.completedActivities)
       .toEqual([]);
+  });
+
+  it('builds activity history with the cabins that completed each activity', () => {
+    const component = new AppComponent();
+    component.generate();
+    const initial = executionStateFor(component);
+    const first = initial.progress[0];
+    const bosqueGroup = component.generatedGroups.find((group) => group.categoryId === 'bosque')!;
+    const sabanaGroup = component.generatedGroups.find((group) => group.categoryId === 'sabana')!;
+    component.executionState = {
+      progress: [
+        {
+          ...first,
+          groupId: sabanaGroup.id,
+          status: 'completed',
+          completedAt: '2026-08-16T13:00:00Z',
+        },
+        {
+          ...first,
+          id: 'second-attendance',
+          groupId: bosqueGroup.id,
+          date: '2026-08-15',
+          status: 'completed',
+          completedAt: '2026-08-15T13:00:00Z',
+        },
+      ],
+      history: [],
+      cycles: [],
+    };
+
+    const activity = component.activityHistoryViews.find((item) => item.activityId === first.activityId)!;
+    expect(activity.attendances.map((item) => item.groupName)).toEqual([
+      bosqueGroup.name,
+      sabanaGroup.name,
+    ]);
+    expect(activity.attendances.every((item) => item.programName.length > 0)).toBeTrue();
+  });
+
+  it('offers incomplete scheduled cabins for manual activity attendance', async () => {
+    const component = new AppComponent();
+    component.generate();
+    const initial = executionStateFor(component);
+    const first = initial.progress[0];
+    component.executionState = initial;
+    component.currentUser = { id: 'user-1', email: 'test@example.com' };
+    component.savedScheduleId = 'schedule-1';
+    let changedStatus = '';
+    component.assignmentProgressService = {
+      ...assignmentProgressGateway({
+        ...initial,
+        progress: [{ ...first, status: 'completed', completedAt: '2026-08-15T13:00:00Z' }],
+      }),
+      setStatus: async (_progressId, status) => { changedStatus = status; },
+    };
+    component.attendanceProgressSelections = { [first.activityId]: first.id };
+
+    expect(component.activityHistoryViews.find((item) => item.activityId === first.activityId)!
+      .availableProgress.map((item) => item.progressId)).toContain(first.id);
+    await component.addActivityAttendance(first.activityId);
+
+    expect(changedStatus).toBe('completed');
+    expect(component.activityHistoryViews.find((item) => item.activityId === first.activityId)!
+      .attendances.map((item) => item.progressId)).toContain(first.id);
   });
 });

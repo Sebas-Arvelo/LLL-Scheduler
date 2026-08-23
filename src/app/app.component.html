@@ -253,7 +253,12 @@
             <input type="number" [min]="activity.minGroups ?? 1" [(ngModel)]="activity.maxGroups" (ngModelChange)="markScheduleStale()" />
           </label>
           <label class="compact-field capacity-field">
-            <span>Elegir bloque</span>
+            <span class="field-label-help" tabindex="0">
+              Elegir bloque <span class="field-help-icon" aria-hidden="true">ⓘ</span>
+              <span class="field-help-popup" role="tooltip">
+                Al elegirlo, todas las cabañas elegibles asistirán.
+              </span>
+            </span>
             <select
               [ngModel]="activityStartBlockId(activity.id)"
               (ngModelChange)="setActivityStartBlock(activity.id, $event)"
@@ -378,6 +383,15 @@
             (click)="selectGroupDate(date)"
           >
             Día {{ dayIndex + 1 }} · {{ date }}
+          </button>
+          <button
+            type="button"
+            class="danger-button"
+            *ngIf="selectedGroupDate && savedScheduleId"
+            (click)="deleteGeneratedDay(selectedGroupDate)"
+            [disabled]="executionStateStatus === 'updating'"
+          >
+            Eliminar día
           </button>
         </div>
 
@@ -600,6 +614,63 @@
               </li>
             </ul>
             <ng-template #noExempted><p>Ninguna.</p></ng-template>
+          </div>
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <section class="panel real-history-panel" *ngIf="savedScheduleId">
+    <div class="panel-header">
+      <div>
+        <p class="panel-kicker">Ejecución real</p>
+        <h2>Historial por actividad</h2>
+      </div>
+      <span>Solo asistencias completadas</span>
+    </div>
+    <div class="real-history-list">
+      <details class="real-history-card" *ngFor="let activity of activityHistoryViews">
+        <summary>
+          <strong>{{ activity.activityName }}</strong>
+          <span>{{ activity.attendances.length }} asistencias</span>
+        </summary>
+        <div class="history-details">
+          <ul *ngIf="activity.attendances.length; else noActivityAttendance">
+            <li *ngFor="let attendance of activity.attendances">
+              <div>
+                <strong>{{ attendance.groupName }}</strong>
+                <small>{{ attendance.programName }}</small>
+                <span>{{ attendance.date }} · {{ attendance.timeBlockName }}</span>
+              </div>
+              <button
+                type="button"
+                class="danger-button compact-action"
+                (click)="removeActivityAttendance(attendance.progressId)"
+                [disabled]="executionStateStatus === 'updating'"
+              >
+                Eliminar
+              </button>
+            </li>
+          </ul>
+          <ng-template #noActivityAttendance><p>Ninguna cabaña ha asistido todavía.</p></ng-template>
+          <div class="attendance-editor" *ngIf="activity.availableProgress.length">
+            <select
+              aria-label="Cabaña que asistió"
+              [(ngModel)]="attendanceProgressSelections[activity.activityId]"
+            >
+              <option value="">Seleccionar cabaña programada</option>
+              <option *ngFor="let available of activity.availableProgress" [value]="available.progressId">
+                {{ available.groupName }} · {{ available.date }} · {{ available.timeBlockName }}
+              </option>
+            </select>
+            <button
+              type="button"
+              class="secondary-button"
+              (click)="addActivityAttendance(activity.activityId)"
+              [disabled]="!attendanceProgressSelections[activity.activityId] || executionStateStatus === 'updating'"
+            >
+              Agregar cabaña
+            </button>
           </div>
         </div>
       </details>

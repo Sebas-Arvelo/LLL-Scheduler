@@ -83,6 +83,35 @@ interface RealCycleView {
   exempted: readonly { id: string; name: string }[];
 }
 
+interface ActivityHistoryView {
+  activityId: string;
+  activityName: string;
+  attendances: readonly {
+    progressId: string;
+    groupName: string;
+    categoryId: string;
+    programName: string;
+    date: string;
+    timeBlockName: string;
+    completedAt: string;
+  }[];
+  availableProgress: readonly {
+    progressId: string;
+    groupName: string;
+    categoryId: string;
+    date: string;
+    timeBlockName: string;
+  }[];
+}
+
+const PROGRAM_HISTORY_ORDER: Readonly<Record<string, number>> = {
+  bosque: 0,
+  sabana: 1,
+  aventura: 2,
+  cit: 3,
+};
+const CABIN_NAME_COLLATOR = new Intl.Collator('es', { numeric: true, sensitivity: 'base' });
+
 type DayMode = 'regular' | 'morning' | 'custom' | 'special';
 
 const DIAGNOSTIC_MESSAGES: Readonly<Record<SchedulingDiagnosticCode, string>> = {
@@ -232,6 +261,55 @@ function mergeScheduleResults(
   };
 }
 
+function removeScheduleDay(result: ScheduleGenerationResult, date: string): ScheduleGenerationResult {
+  const assignments = result.assignments.filter((assignment) => assignment.date !== date);
+  const blocks = result.blocks.filter((block) => block.slot.date !== date);
+  const unassigned = result.unassigned.filter((block) => block.slot.date !== date);
+  const byGroup = result.metrics.byGroup.map((metrics) => {
+    const groupAssignments = assignments.filter((assignment) => assignment.groupId === metrics.groupId);
+    const activityUsage: Record<string, number> = {};
+    for (const assignment of groupAssignments) {
+      activityUsage[assignment.activityId] = (activityUsage[assignment.activityId] ?? 0) + 1;
+    }
+    return {
+      ...metrics,
+      totalAssignments: groupAssignments.length,
+      distinctActivityCount: Object.keys(activityUsage).length,
+      prematureRepetitionCount: 0,
+      completedCycleCount: 0,
+      activityUsage,
+    };
+  });
+  const activityUsage: Record<string, number> = {};
+  for (const assignment of assignments) {
+    activityUsage[assignment.activityId] = (activityUsage[assignment.activityId] ?? 0) + 1;
+  }
+  const unassignedCells = unassigned.reduce((sum, block) => sum + block.groups.length, 0);
+  const usageValues = Object.values(activityUsage);
+  return {
+    ...result,
+    status: unassignedCells > 0 ? 'partial' : 'success',
+    assignments,
+    blocks,
+    unassigned,
+    projectedCycles: [],
+    metrics: {
+      byGroup,
+      global: {
+        requestedGroupBlocks: assignments.length + unassignedCells,
+        successfulAssignments: assignments.length,
+        unassignedCells,
+        coveragePercentage: assignments.length + unassignedCells === 0
+          ? 100
+          : assignments.length / (assignments.length + unassignedCells) * 100,
+        prematureRepetitionCount: 0,
+        activityUsage,
+        activityUsageStandardDeviation: standardDeviation(usageValues),
+      },
+    },
+  };
+}
+
 @Component({
   selector: 'app-root',
   standalone: true,
@@ -274,6 +352,7 @@ export class AppComponent implements OnInit, OnDestroy {
   afternoonActivityName = 'Batalla de Araure';
   dailyUnavailableActivityIds: string[] = [];
   dailyActivityStartBlockIds: Record<string, string> = {};
+  attendanceProgressSelections: Record<string, string> = {};
   seed = 2026;
   activitySearch = '';
   showProjectedCycles = false;
@@ -438,6 +517,62 @@ export class AppComponent implements OnInit, OnDestroy {
           .map((item) => ({ id: item.id, name: activityById.get(item.activityId) ?? item.activityId })) ?? [],
       };
     });
+  }
+
+  get activityHistoryViews(): readonly ActivityHistoryView[] {
+    const groupById = new Map(this.generatedGroups.map((group) => [group.id, group]));
+    const categoryById = new Map(this.generatedCategories.map((category) => [category.id, category.name]));
+    const blockById = new Map(this.generatedTimeBlocks.map((block) => [block.id, block.name]));
+    const historyByActivity = new Map<string, ActivityHistoryView['attendances'][number][]>();
+    for (const entry of this.realHistory) {
+      const attendances = historyByActivity.get(entry.activityId) ?? [];
+      const group = groupById.get(entry.groupId);
+      attendances.push({
+        progressId: entry.progressId,
+        groupName: group?.name ?? entry.groupId,
+        categoryId: group?.categoryId ?? '',
+        programName: categoryById.get(group?.categoryId ?? '') ?? 'Programa desconocido',
+        date: entry.date,
+        timeBlockName: blockById.get(entry.timeBlockId) ?? entry.timeBlockId,
+        completedAt: entry.completedAt,
+      });
+      historyByActivity.set(entry.activityId, attendances);
+    }
+    const availableByActivity = new Map<string, ActivityHistoryView['availableProgress'][number][]>();
+    for (const progress of this.executionState.progress) {
+      if (progress.status === 'completed') continue;
+      if (progress.sessionBlockCount !== undefined && progress.sessionBlockIndex !== progress.sessionBlockCount - 1) continue;
+      const available = availableByActivity.get(progress.activityId) ?? [];
+      const group = groupById.get(progress.groupId);
+      available.push({
+        progressId: progress.id,
+        groupName: group?.name ?? progress.groupId,
+        categoryId: group?.categoryId ?? '',
+        date: progress.date,
+        timeBlockName: blockById.get(progress.timeBlockId) ?? progress.timeBlockId,
+      });
+      availableByActivity.set(progress.activityId, available);
+    }
+    return this.generatedActivities
+      .map((activity) => ({
+        activityId: activity.id,
+        activityName: activity.name,
+        attendances: [...(historyByActivity.get(activity.id) ?? [])]
+          .sort((left, right) =>
+            (PROGRAM_HISTORY_ORDER[left.categoryId] ?? Number.MAX_SAFE_INTEGER) -
+              (PROGRAM_HISTORY_ORDER[right.categoryId] ?? Number.MAX_SAFE_INTEGER) ||
+            CABIN_NAME_COLLATOR.compare(left.groupName, right.groupName) ||
+            right.completedAt.localeCompare(left.completedAt),
+          ),
+        availableProgress: [...(availableByActivity.get(activity.id) ?? [])]
+          .sort((left, right) =>
+            (PROGRAM_HISTORY_ORDER[left.categoryId] ?? Number.MAX_SAFE_INTEGER) -
+              (PROGRAM_HISTORY_ORDER[right.categoryId] ?? Number.MAX_SAFE_INTEGER) ||
+            CABIN_NAME_COLLATOR.compare(left.groupName, right.groupName) ||
+            right.date.localeCompare(left.date),
+          ),
+      }))
+      .sort((left, right) => left.activityName.localeCompare(right.activityName));
   }
 
   get availableActivityDates(): readonly LocalDate[] {
@@ -665,6 +800,49 @@ export class AppComponent implements OnInit, OnDestroy {
     this.selectedGroupDate = date;
   }
 
+  async addActivityAttendance(activityId: string): Promise<void> {
+    const progressId = this.attendanceProgressSelections[activityId];
+    const progress = this.executionState.progress.find((item) => item.id === progressId);
+    if (!progress) return;
+    await this.changeProgressStatus(progress, 'completed');
+    this.attendanceProgressSelections = { ...this.attendanceProgressSelections, [activityId]: '' };
+  }
+
+  async removeActivityAttendance(progressId: string): Promise<void> {
+    const progress = this.executionState.progress.find((item) => item.id === progressId);
+    if (!progress || !window.confirm('¿Quitar esta asistencia del historial y marcarla como cancelada?')) return;
+    await this.changeProgressStatus(progress, 'cancelled');
+  }
+
+  async deleteGeneratedDay(date: string): Promise<void> {
+    if (!this.currentUser || !this.savedScheduleId || !this.generationResult) return;
+    if (!window.confirm(`¿Eliminar el día ${date} y todo su progreso?`)) return;
+    this.executionStateStatus = 'updating';
+    this.executionMessage = 'Eliminando día…';
+    try {
+      await this.assignmentProgressService.deleteDay(this.savedScheduleId, date, this.currentUser.id);
+      this.generationResult = removeScheduleDay(this.generationResult, date);
+      const dates = [...new Set(this.generationResult.blocks.map((block) => block.slot.date))].sort();
+      if (this.generatedSeason && dates.length > 0) {
+        this.generatedSeason = { ...this.generatedSeason, startDate: dates[0], endDate: dates.at(-1)! };
+      }
+      this.scheduleGrid = buildScheduleGrid(
+        this.generationResult,
+        this.generatedGroups,
+        this.generatedCategories,
+        this.generatedActivities,
+        this.generatedTimeBlocks,
+      );
+      this.selectedGroupDate = dates.at(-1) ?? '';
+      this.scheduleStale = false;
+      await this.saveSchedule();
+      this.executionMessage = 'Día eliminado.';
+    } catch (error) {
+      this.executionStateStatus = 'error';
+      this.executionMessage = error instanceof Error ? error.message : 'No se pudo eliminar el día.';
+    }
+  }
+
   selectActivityBlock(timeBlockId: string): void {
     this.selectedActivityBlockId = timeBlockId;
     this.refreshActivitySlotView();
@@ -708,6 +886,7 @@ export class AppComponent implements OnInit, OnDestroy {
           )
           .map((assignment) => ({ ...assignment, status: 'completed' as const })) ?? []),
       ],
+      lockedAssignments: dailyConfiguration.lockedAssignments,
       hardConstraints: dailyConfiguration.hardConstraints,
       seed: this.seed,
     });
@@ -1162,6 +1341,7 @@ export class AppComponent implements OnInit, OnDestroy {
         timeBlocks: activeBlocks,
         activities: this.activities,
         eligibility: this.activityEligibility,
+        lockedAssignments: this.dailyLockedActivityAssignments(groups, activeBlocks),
         hardConstraints: {
           activityAvailability: activeBlocks.flatMap((block) =>
             this.dailyUnavailableActivityIds.map((activityId) => ({
@@ -1210,6 +1390,7 @@ export class AppComponent implements OnInit, OnDestroy {
         timeBlocks: [...morningBlocks, afternoonBlock],
         activities: [...this.activities, ...afternoonActivities],
         eligibility: [...this.activityEligibility, ...afternoonEligibility],
+        lockedAssignments: this.dailyLockedActivityAssignments(groups, morningBlocks),
         hardConstraints: {
           activityAvailability: [
             ...morningBlocks.flatMap((block) => [
@@ -1270,6 +1451,7 @@ export class AppComponent implements OnInit, OnDestroy {
       timeBlocks: [specialBlock],
       activities: [...this.activities, ...specialActivities],
       eligibility: [...this.activityEligibility, ...specialEligibility],
+      lockedAssignments: [],
       hardConstraints: {
         activityAvailability: regularActivityIds.map((activityId) => ({
           activityId,
@@ -1291,6 +1473,35 @@ export class AppComponent implements OnInit, OnDestroy {
         date: this.planningDate,
         timeBlockId,
       }));
+  }
+
+  private dailyLockedActivityAssignments(
+    groups: readonly CampGroup[],
+    blocks: readonly TimeBlock[],
+  ): readonly Assignment[] {
+    const activeBlockIds = new Set(blocks.map((block) => block.id));
+    const eligibleCategoriesByActivity = new Map<string, Set<string>>();
+    for (const entry of this.activityEligibility) {
+      const categories = eligibleCategoriesByActivity.get(entry.activityId) ?? new Set<string>();
+      categories.add(entry.groupCategoryId);
+      eligibleCategoriesByActivity.set(entry.activityId, categories);
+    }
+    return Object.entries(this.dailyActivityStartBlockIds).flatMap(([activityId, timeBlockId]) => {
+      const activity = this.activities.find((candidate) => candidate.id === activityId && candidate.active);
+      if (!activity || !activeBlockIds.has(timeBlockId) || !this.isActivityAvailableToday(activityId)) return [];
+      const eligibleCategories = eligibleCategoriesByActivity.get(activityId) ?? new Set<string>();
+      return groups
+        .filter((group) => group.active && eligibleCategories.has(group.categoryId))
+        .map<Assignment>((group) => ({
+          groupId: group.id,
+          activityId,
+          date: this.planningDate,
+          timeBlockId,
+          source: 'manual',
+          status: 'confirmed',
+          locked: true,
+        }));
+    });
   }
 
   private clearInvalidActivityStartBlocks(): void {

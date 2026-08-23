@@ -12,6 +12,7 @@ export interface AssignmentProgressGateway {
   load(savedScheduleId: string, userId: string, groupIds: readonly string[]): Promise<RealExecutionState>;
   setStatus(progressId: string, status: AssignmentProgressStatus, userId: string): Promise<void>;
   setRequirementStatus(requirementId: string, status: 'pending' | 'exempted', userId: string): Promise<void>;
+  deleteDay(savedScheduleId: string, date: string, userId: string): Promise<void>;
 }
 
 interface AssignmentProgressRow {
@@ -162,5 +163,18 @@ export class AssignmentProgressService implements AssignmentProgressGateway {
       p_user_id: userId,
     });
     if (error) throw new Error('No se pudo actualizar el requisito del ciclo.');
+  }
+
+  async deleteDay(savedScheduleId: string, date: string, userId: string): Promise<void> {
+    supabaseClientService.requireConfigured();
+    const client = await supabaseClientService.getClient();
+    const { error } = await client.rpc('delete_schedule_day', {
+      p_saved_schedule_id: savedScheduleId,
+      p_date: date,
+      p_user_id: userId,
+    });
+    if (error) throw new Error(error.message.includes('later cycle')
+      ? 'No se puede eliminar este día porque ya existe un ciclo posterior.'
+      : 'No se pudo eliminar el día de la programación.');
   }
 }

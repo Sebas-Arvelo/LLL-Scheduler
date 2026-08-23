@@ -27,6 +27,22 @@ test('Supabase execution setup is idempotent and keeps one progress row per plan
   assert.match(sql, /coalesce\(\(activity->>'countsTowardCycle'\)::boolean, true\)/i);
 });
 
+test('Supabase auto-completes untouched progress while preserving manual exceptions', async () => {
+  const sql = await readFile(resolve(process.cwd(), 'supabase/setup.sql'), 'utf8');
+  assert.match(sql, /status_manually_set boolean not null default false/i);
+  assert.match(sql, /status = 'planned' and not status_manually_set/i);
+  assert.match(sql, /set status = p_status, completed_at = null, cycle_id = null, status_manually_set = true/i);
+  assert.match(sql, /perform public\.set_assignment_progress_status\(v_progress_id, 'completed', v_user_id\)/i);
+});
+
+test('Supabase deletes a saved day through the progress transition rules', async () => {
+  const sql = await readFile(resolve(process.cwd(), 'supabase/setup.sql'), 'utf8');
+  assert.match(sql, /create or replace function public\.delete_schedule_day/i);
+  assert.match(sql, /perform public\.set_assignment_progress_status\(v_progress\.id, 'planned', p_user_id\)/i);
+  assert.match(sql, /delete from public\.assignment_progress[\s\S]*date = p_date/i);
+  assert.match(sql, /grant execute on function public\.delete_schedule_day\(uuid, date, uuid\) to authenticated/i);
+});
+
 test('Supabase scopes activity cycles to the saved schedule', async () => {
   const sql = await readFile(resolve(process.cwd(), 'supabase/setup.sql'), 'utf8');
   assert.match(sql, /activity_cycles[\s\S]*saved_schedule_id uuid/i);

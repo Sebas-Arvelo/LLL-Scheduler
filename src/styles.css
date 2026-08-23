@@ -10,6 +10,53 @@ body {
   box-sizing: border-box;
 }
 
+.compact-field .field-label-help {
+  position: relative;
+  width: fit-content;
+  cursor: help;
+}
+
+.compact-field .field-help-icon {
+  color: #155c2c;
+}
+
+.compact-field .field-help-popup {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 7px);
+  left: 0;
+  display: none;
+  width: 220px;
+  padding: 9px 11px;
+  color: #17331d;
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.35;
+  background: #fff;
+  border: 1px solid rgba(25, 80, 41, 0.2);
+  border-radius: 10px;
+  box-shadow: 0 8px 22px rgba(20, 55, 29, 0.16);
+}
+
+.compact-field .field-label-help:hover .field-help-popup,
+.compact-field .field-label-help:focus .field-help-popup,
+.compact-field .field-label-help:focus-within .field-help-popup {
+  display: block;
+}
+
+.attendance-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+@media (max-width: 760px) {
+  .attendance-editor {
+    grid-template-columns: 1fr;
+  }
+}
+
 .session-loading,
 .auth-shell {
   min-height: 100vh;
